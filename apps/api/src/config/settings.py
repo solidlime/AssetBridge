@@ -1,14 +1,20 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from cryptography.fernet import Fernet
+from pathlib import Path
 import secrets
+
+# 機密ファイルはプロジェクト外のホームディレクトリに隔離
+# ~/.assetbridge/.env.secrets → Claude Code のプロジェクトスコープ外
+_SECRETS_PATH = Path.home() / ".assetbridge" / ".env.secrets"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        # .env（非機密）と .env.secrets（機密）を両方ロード
-        # 同名キーは後者が優先
-        env_file=(".env", ".env.secrets"),
+        # 優先度: 高 → 低
+        # 1. ~/.assetbridge/.env.secrets（機密・プロジェクト外）
+        # 2. .env（非機密・プロジェクト内）
+        env_file=(str(_SECRETS_PATH), ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
