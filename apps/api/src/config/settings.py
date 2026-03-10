@@ -6,7 +6,9 @@ import secrets
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # .env（非機密）と .env.secrets（機密）を両方ロード
+        # 同名キーは後者が優先
+        env_file=(".env", ".env.secrets"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -42,6 +44,7 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     MCP_HOST: str = "0.0.0.0"
     MCP_PORT: int = 8001
+    WEB_PORT: int = 3000
 
 
 settings = Settings()

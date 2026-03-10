@@ -7,20 +7,29 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# .env から WEB_PORT を読み込む（デフォルト: 3000）
+WEB_PORT="${WEB_PORT:-3000}"
+if [ -f ".env" ]; then
+  _WEB_PORT=$(grep -E '^WEB_PORT=' .env | cut -d'=' -f2 | tr -d ' ')
+  [ -n "$_WEB_PORT" ] && WEB_PORT="$_WEB_PORT"
+fi
+API_PORT="${API_PORT:-8000}"
+MCP_PORT="${MCP_PORT:-8001}"
+
 echo "=============================="
 echo "  AssetBridge Dev Server"
 echo "=============================="
 
-# FastAPI (port 8000)
-echo "[1/4] FastAPI を起動中 (port 8000)..."
-cd "$PROJECT_ROOT/apps/api" && python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload &
+# FastAPI
+echo "[1/4] FastAPI を起動中 (port ${API_PORT})..."
+cd "$PROJECT_ROOT/apps/api" && python -m uvicorn src.main:app --host 0.0.0.0 --port "$API_PORT" --reload &
 API_PID=$!
 cd "$PROJECT_ROOT"
 
 sleep 2
 
-# MCP Server (port 8001)
-echo "[2/4] MCP サーバを起動中 (port 8001)..."
+# MCP Server
+echo "[2/4] MCP サーバを起動中 (port ${MCP_PORT})..."
 cd "$PROJECT_ROOT/apps/mcp" && python src/server.py &
 MCP_PID=$!
 cd "$PROJECT_ROOT"
@@ -31,9 +40,9 @@ cd "$PROJECT_ROOT/apps/discord-bot" && python src/bot.py &
 BOT_PID=$!
 cd "$PROJECT_ROOT"
 
-# Next.js (port 3000)
-echo "[4/4] Next.js を起動中 (port 3000)..."
-cd "$PROJECT_ROOT/apps/web" && pnpm dev &
+# Next.js
+echo "[4/4] Next.js を起動中 (port ${WEB_PORT})..."
+cd "$PROJECT_ROOT/apps/web" && pnpm dev -p "$WEB_PORT" &
 WEB_PID=$!
 cd "$PROJECT_ROOT"
 
@@ -41,9 +50,9 @@ echo ""
 echo "=============================="
 echo "  サービス一覧"
 echo "=============================="
-echo "FastAPI Swagger: http://localhost:8000/docs"
-echo "MCP Server:      http://localhost:8001/mcp"
-echo "Web Dashboard:   http://localhost:3000"
+echo "FastAPI Swagger: http://localhost:${API_PORT}/docs"
+echo "MCP Server:      http://localhost:${MCP_PORT}/mcp"
+echo "Web Dashboard:   http://localhost:${WEB_PORT}"
 echo ""
 echo "Ctrl+C で全サービスを停止"
 echo "=============================="

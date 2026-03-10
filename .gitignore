@@ -1,6 +1,7 @@
 # Environment
 .env
 .env.local
+.env.secrets      # 機密情報（絶対にコミットしない）
 
 # Python
 __pycache__/
