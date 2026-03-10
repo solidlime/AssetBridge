@@ -53,6 +53,22 @@ export default async function DashboardPage() {
         ))}
       </div>
 
+      {/* 30日資産推移グラフ */}
+      {history?.history && history.history.length > 0 && (
+        <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>資産推移</h2>
+          <AssetHistoryChart data={history.history} />
+        </div>
+      )}
+
+      {/* AIコメントカード */}
+      {summary?.ai_comment && (
+        <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24, borderLeft: "3px solid #60a5fa" }}>
+          <div style={{ fontSize: 12, color: "#60a5fa", marginBottom: 8 }}>AI コメント</div>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#e2e8f0" }}>{summary.ai_comment}</p>
+        </div>
+      )}
+
       {/* 含み損益 TOP5 */}
       {pnl?.ranking && pnl.ranking.length > 0 && (
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>

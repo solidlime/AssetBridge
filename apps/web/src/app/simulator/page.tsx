@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { api } from "@/lib/api";
+import SimulatorChart from "@/components/charts/SimulatorChart";
 
 export default function SimulatorPage() {
   const [params, setParams] = useState({
@@ -34,7 +35,8 @@ export default function SimulatorPage() {
     color: "white",
     width: "100%",
     fontSize: 14,
-  } as const;
+    boxSizing: "border-box" as const,
+  };
 
   return (
     <div>
@@ -51,8 +53,14 @@ export default function SimulatorPage() {
             { key: "volatility", label: "ボラティリティ (%)", step: 0.01, factor: 100 },
           ].map(({ key, label, step, min, max, factor }) => (
             <div key={key}>
-              <label style={{ display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>{label}</label>
+              <label
+                htmlFor={`input-${key}`}
+                style={{ display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 6 }}
+              >
+                {label}
+              </label>
               <input
+                id={`input-${key}`}
                 type="number"
                 step={step}
                 min={min}
@@ -87,25 +95,48 @@ export default function SimulatorPage() {
         </button>
       </div>
 
-      {/* 結果表示 */}
+      {/* 結果グラフ + サマリー */}
       {result && (
-        <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{result.years}年後の試算結果</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
-            {Object.entries(result.final_values || {}).map(([key, value]) => {
-              const labels: Record<string, string> = { p10: "悲観的(10%)", p25: "やや悲観(25%)", p50: "中央値(50%)", p75: "やや楽観(75%)", p90: "楽観的(90%)" };
-              const colors: Record<string, string> = { p10: "#f87171", p25: "#fb923c", p50: "#facc15", p75: "#4ade80", p90: "#34d399" };
-              return (
-                <div key={key} style={{ background: "#0f172a", borderRadius: 8, padding: 16, textAlign: "center" }}>
-                  <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 8 }}>{labels[key] || key}</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: colors[key] || "white" }}>
-                    ¥{((value as number) / 1e6).toFixed(1)}M
+        <>
+          {/* パーセンタイル推移グラフ */}
+          {result.yearly_data && result.yearly_data.length > 0 && (
+            <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{result.years}年間の資産推移シミュレーション</h2>
+              <SimulatorChart data={result.yearly_data} />
+            </div>
+          )}
+
+          {/* 最終値サマリー */}
+          <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{result.years}年後の試算結果</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+              {Object.entries(result.final_values || {}).map(([key, value]) => {
+                const labels: Record<string, string> = {
+                  p10: "悲観的(10%)",
+                  p25: "やや悲観(25%)",
+                  p50: "中央値(50%)",
+                  p75: "やや楽観(75%)",
+                  p90: "楽観的(90%)",
+                };
+                const colors: Record<string, string> = {
+                  p10: "#f87171",
+                  p25: "#fb923c",
+                  p50: "#facc15",
+                  p75: "#4ade80",
+                  p90: "#34d399",
+                };
+                return (
+                  <div key={key} style={{ background: "#0f172a", borderRadius: 8, padding: 16, textAlign: "center" }}>
+                    <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 8 }}>{labels[key] || key}</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: colors[key] || "white" }}>
+                      ¥{((value as number) / 1e6).toFixed(1)}M
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
