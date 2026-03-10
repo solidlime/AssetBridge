@@ -20,8 +20,8 @@ CATEGORY_COLUMN_MAP: dict[str, str] = {
 
 
 class MFSBIScraper(BaseScraper):
-    LOGIN_URL = "https://id.moneyforward.com/sign_in"
-    BASE_URL = "https://netbk.moneyforward.com"
+    BASE_URL = "https://ssnb.x.moneyforward.com"
+    LOGIN_URL = f"{BASE_URL}/"        # トップからSSO（id.moneyforward.com）へリダイレクト
     PORTFOLIO_URL = f"{BASE_URL}/bs/portfolio"
 
     def __init__(self, headless: bool = True):
@@ -31,8 +31,16 @@ class MFSBIScraper(BaseScraper):
 
     async def login(self) -> bool:
         try:
+            # ssnb.x.moneyforward.com のトップにアクセスすると
+            # id.moneyforward.com の SSO ログインページにリダイレクトされる
             await self._page.goto(self.LOGIN_URL, wait_until="networkidle")
             await self._random_wait()
+
+            # SSO ログインページが表示されているか確認
+            # （既にログイン済みの場合はポートフォリオに直接遷移する）
+            if "ssnb.x.moneyforward.com" in self._page.url:
+                logger.info("既にログイン済み")
+                return True
 
             # メールアドレス入力
             await self._page.fill('input[name="email"]', self.settings.MF_EMAIL)
@@ -49,8 +57,8 @@ class MFSBIScraper(BaseScraper):
             if "two_factor" in current_url or "otp" in current_url.lower():
                 await self._handle_2fa()
 
-            # ポートフォリオページへのリダイレクトでログイン成功を確認
-            await self._page.wait_for_url("**/bs/portfolio**", timeout=15000)
+            # ssnb.x.moneyforward.com へのリダイレクトでログイン成功を確認
+            await self._page.wait_for_url("**/ssnb.x.moneyforward.com/**", timeout=15000)
 
             # セッション Cookie を暗号化保存
             cookies = await self._context.cookies()
