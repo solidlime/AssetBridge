@@ -7,12 +7,16 @@ set -e
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-# .env から WEB_PORT を読み込む（デフォルト: 3000）
-WEB_PORT="${WEB_PORT:-3000}"
-if [ -f ".env" ]; then
-  _WEB_PORT=$(grep -E '^WEB_PORT=' .env | cut -d'=' -f2 | tr -d ' ')
-  [ -n "$_WEB_PORT" ] && WEB_PORT="$_WEB_PORT"
+# ~/.assetbridge/.env から設定を読み込む（ASSETBRIDGE_ENV_PATH で上書き可）
+_ENV_FILE="${ASSETBRIDGE_ENV_PATH:-$HOME/.assetbridge/.env}"
+if [ -f "$_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$_ENV_FILE"
+  set +a
 fi
+
+WEB_PORT="${WEB_PORT:-3000}"
 API_PORT="${API_PORT:-8000}"
 MCP_PORT="${MCP_PORT:-8001}"
 

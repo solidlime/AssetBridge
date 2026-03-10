@@ -4,17 +4,19 @@ from cryptography.fernet import Fernet
 from pathlib import Path
 import secrets
 
-# 機密ファイルはプロジェクト外のホームディレクトリに隔離
-# ~/.assetbridge/.env.secrets → Claude Code のプロジェクトスコープ外
-_SECRETS_PATH = Path.home() / ".assetbridge" / ".env.secrets"
+# .env は ~/.assetbridge/.env に隔離（Claude Code のプロジェクトスコープ外）
+# ASSETBRIDGE_ENV_PATH 環境変数で上書き可能
+_ENV_PATH = Path(
+    __import__("os").environ.get(
+        "ASSETBRIDGE_ENV_PATH",
+        str(Path.home() / ".assetbridge" / ".env"),
+    )
+)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        # 優先度: 高 → 低
-        # 1. ~/.assetbridge/.env.secrets（機密・プロジェクト外）
-        # 2. .env（非機密・プロジェクト内）
-        env_file=(str(_SECRETS_PATH), ".env"),
+        env_file=str(_ENV_PATH),
         env_file_encoding="utf-8",
         extra="ignore",
     )
