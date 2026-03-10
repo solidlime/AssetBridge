@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "assetbridge": {
+      "type": "http",
+      "url": "http://localhost:8001/mcp"
+    }
+  }
+}

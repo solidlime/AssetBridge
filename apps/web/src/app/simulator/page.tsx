@@ -1,0 +1,112 @@
+"use client";
+import { useState } from "react";
+import { api } from "@/lib/api";
+
+export default function SimulatorPage() {
+  const [params, setParams] = useState({
+    initial_amount: 1000000,
+    monthly_investment: 50000,
+    years: 20,
+    expected_return: 0.05,
+    volatility: 0.15,
+  });
+  const [result, setResult] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      const res = await api.simulator.run(params);
+      setResult(res);
+    } catch (e) {
+      console.warn("シミュレーション実行エラー:", e);
+      alert("シミュレーション実行エラー");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inputStyle = {
+    background: "#334155",
+    border: "1px solid #475569",
+    borderRadius: 8,
+    padding: "8px 12px",
+    color: "white",
+    width: "100%",
+    fontSize: 14,
+  } as const;
+
+  return (
+    <div>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>モンテカルロシミュレーター</h1>
+
+      {/* 入力フォーム */}
+      <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
+          {[
+            { key: "initial_amount", label: "初期資産 (¥)", step: 100000 },
+            { key: "monthly_investment", label: "月次投資額 (¥)", step: 10000 },
+            { key: "years", label: "運用年数", step: 1, min: 1, max: 50 },
+            { key: "expected_return", label: "期待リターン (%)", step: 0.01, factor: 100 },
+            { key: "volatility", label: "ボラティリティ (%)", step: 0.01, factor: 100 },
+          ].map(({ key, label, step, min, max, factor }) => (
+            <div key={key}>
+              <label style={{ display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>{label}</label>
+              <input
+                type="number"
+                step={step}
+                min={min}
+                max={max}
+                value={factor ? (params[key as keyof typeof params] as number) * factor : params[key as keyof typeof params]}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  setParams(p => ({ ...p, [key]: factor ? v / factor : v }));
+                }}
+                style={inputStyle}
+              />
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={run}
+          disabled={loading}
+          aria-label="シミュレーション実行"
+          style={{
+            marginTop: 16,
+            background: loading ? "#475569" : "#3b82f6",
+            color: "white",
+            border: "none",
+            borderRadius: 8,
+            padding: "10px 24px",
+            cursor: loading ? "not-allowed" : "pointer",
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+        >
+          {loading ? "計算中..." : "シミュレーション実行"}
+        </button>
+      </div>
+
+      {/* 結果表示 */}
+      {result && (
+        <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{result.years}年後の試算結果</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+            {Object.entries(result.final_values || {}).map(([key, value]) => {
+              const labels: Record<string, string> = { p10: "悲観的(10%)", p25: "やや悲観(25%)", p50: "中央値(50%)", p75: "やや楽観(75%)", p90: "楽観的(90%)" };
+              const colors: Record<string, string> = { p10: "#f87171", p25: "#fb923c", p50: "#facc15", p75: "#4ade80", p90: "#34d399" };
+              return (
+                <div key={key} style={{ background: "#0f172a", borderRadius: 8, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 8 }}>{labels[key] || key}</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: colors[key] || "white" }}>
+                    ¥{((value as number) / 1e6).toFixed(1)}M
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
