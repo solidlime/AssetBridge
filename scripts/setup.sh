@@ -157,6 +157,19 @@ source <(sed 's/\r//' "$_ENV_FILE")
 set -e
 set +a
 
+# API_KEY が未設定なら生成して .env に追記（起動ごとに変わらないよう固定）
+if [ -z "${API_KEY:-}" ]; then
+  API_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+  printf '\nAPI_KEY=%s\n' "$API_KEY" >> "$_ENV_FILE"
+  info "API_KEY を生成して .env に保存しました"
+fi
+
+# apps/web/.env.local に接続情報を書き込み（Next.js が API に繋がるよう）
+_API_PORT="${API_PORT:-8000}"
+printf 'NEXT_PUBLIC_API_URL=http://localhost:%s\nNEXT_PUBLIC_API_KEY=%s\n' \
+  "$_API_PORT" "$API_KEY" > "$PROJECT_ROOT/apps/web/.env.local"
+success "apps/web/.env.local 更新済み"
+
 # =========================================================
 # Step 6: データベース初期化
 # =========================================================
@@ -220,14 +233,14 @@ sleep 2
 
 # MCP Server
 info "[2/4] MCP サーバを起動中 (port ${MCP_PORT})..."
-cd "$PROJECT_ROOT/apps/mcp" && PYTHONPATH="$PROJECT_ROOT" python src/server.py &
+cd "$PROJECT_ROOT/apps/mcp" && PYTHONPATH="$PROJECT_ROOT" python -m src.server &
 MCP_PID=$!
 cd "$PROJECT_ROOT"
 
 # Discord Bot
 info "[3/4] Discord Bot を起動中..."
 if [ -n "${DISCORD_TOKEN:-}" ]; then
-  cd "$PROJECT_ROOT/apps/discord-bot" && PYTHONPATH="$PROJECT_ROOT" python src/bot.py &
+  cd "$PROJECT_ROOT/apps/discord-bot" && PYTHONPATH="$PROJECT_ROOT" python -m src.bot &
   BOT_PID=$!
   cd "$PROJECT_ROOT"
 else
