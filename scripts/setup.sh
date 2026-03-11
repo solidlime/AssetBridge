@@ -48,10 +48,12 @@ info "Step 1/6: Python バージョン確認"
 PYTHON_CMD=""
 for cmd in python3 python python3.12 python3.11; do
   if command -v "$cmd" &>/dev/null; then
-    VER=$("$cmd" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
+    VER=$("$cmd" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null) || true
     MAJOR=$(echo "$VER" | cut -d. -f1)
     MINOR=$(echo "$VER" | cut -d. -f2)
-    if [ "$MAJOR" -eq 3 ] && [ "$MINOR" -ge 11 ]; then
+    if [ -n "$MAJOR" ] && [ -n "$MINOR" ] \
+        && [ "$MAJOR" -eq 3 ] 2>/dev/null \
+        && [ "$MINOR" -ge 11 ] 2>/dev/null; then
       PYTHON_CMD="$cmd"
       break
     fi
@@ -147,10 +149,12 @@ else
   success "環境変数ファイル確認済み: $_ENV_FILE"
 fi
 
-# .env を読み込む
+# .env を読み込む（CRLF対策: sedで\rを除去してから読む）
 set -a
 # shellcheck disable=SC1090
-source "$_ENV_FILE"
+set +e
+source <(sed 's/\r//' "$_ENV_FILE")
+set -e
 set +a
 
 # =========================================================
