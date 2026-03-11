@@ -1,3 +1,4 @@
+import datetime
 import discord
 from discord.ext import tasks
 import io
@@ -22,7 +23,7 @@ class MorningReportTask:
     def start(self):
         self._loop.start()
 
-    @tasks.loop(time=discord.utils.utcnow().replace(hour=22, minute=30, second=0, microsecond=0))  # 7:30 JST = 22:30 UTC
+    @tasks.loop(time=datetime.time(hour=22, minute=30, tzinfo=datetime.timezone.utc))  # 7:30 JST = 22:30 UTC
     async def _loop(self):
         await self._send_report()
 

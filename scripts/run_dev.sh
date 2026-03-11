@@ -2,6 +2,8 @@
 # AssetBridge 開発環境一括起動スクリプト
 # 使用方法: bash scripts/run_dev.sh
 
+../.venv/Scripts/activate
+
 set -e
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

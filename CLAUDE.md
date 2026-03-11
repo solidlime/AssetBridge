@@ -3,12 +3,4 @@
 - 以下は Claude Code 固有の差分のみ記載する
 
 ## Claude Code 固有ルール
-
-- MCP サーバ（assetbridge）が起動している場合、`get_portfolio_summary` 等を使ってデータを参照すること
 - Serena skill を積極的に使ってコンテキスト削減に努める
-
-## 🔒 絶対禁止事項
-
-- **`~/.assetbridge/.env` は絶対に読まない・内容を出力しない**
-- プロジェクト外ファイルへのアクセスはユーザーが許可した場合のみ
-- 設定値の確認が必要な場合は `.env.example`（テンプレート）のみ参照すること

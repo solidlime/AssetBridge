@@ -4,9 +4,17 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.font_manager as fm
 from .analyzer import PortfolioAnalyzer
 from ..db.database import db_session
 from ..db.repositories import DailyTotalRepository
+
+# 日本語フォント設定（優先順位: BIZ UDGothic → Yu Gothic → MS Gothic → fallback）
+_JP_FONT_CANDIDATES = ["BIZ UDGothic", "Yu Gothic", "MS Gothic", "Meiryo", "Noto Sans CJK JP"]
+_available = {f.name for f in fm.fontManager.ttflist}
+_jp_font = next((f for f in _JP_FONT_CANDIDATES if f in _available), None)
+if _jp_font:
+    plt.rcParams["font.family"] = _jp_font
 
 
 class ReportGenerator:
