@@ -9,13 +9,11 @@ logger = logging.getLogger(__name__)
 # MF のカテゴリ名と DailyTotal カラム名のマッピング
 # NOTE: MF の UI 変更によりカテゴリ名が変わる可能性あり。変更時は要確認。
 CATEGORY_COLUMN_MAP: dict[str, str] = {
-    "日本株": "stock_jp_jpy",
-    "外国株": "stock_us_jpy",
+    "預金・現金・暗号資産": "cash_jpy",
+    "株式（現物）": "stock_jp_jpy",
     "投資信託": "fund_jpy",
-    "仮想通貨": "crypto_jpy",
-    "現金・預金": "cash_jpy",
     "年金": "pension_jpy",
-    "ポイント": "point_jpy",
+    "ポイント・マイル": "point_jpy",
 }
 
 
@@ -31,58 +29,125 @@ class MFSBIScraper(BaseScraper):
 
     async def login(self) -> bool:
         try:
-            # ssnb.x.moneyforward.com のトップにアクセスすると
-            # id.moneyforward.com の SSO ログインページにリダイレクトされる
-            await self._page.goto(self.LOGIN_URL, wait_until="networkidle")
+            # ポートフォリオページに直接アクセス（認証済みなら到達できる）
+            await self._page.goto(self.PORTFOLIO_URL, wait_until="networkidle")
             await self._random_wait()
 
-            # SSO ログインページが表示されているか確認
-            # （既にログイン済みの場合はポートフォリオに直接遷移する）
-            if "ssnb.x.moneyforward.com" in self._page.url:
-                logger.info("既にログイン済み")
+            current_url = self._page.url
+            # ログイン不要（sign_in でない ssnb ページにいる）
+            if "ssnb.x.moneyforward.com" in current_url and "sign_in" not in current_url:
+                logger.info("既にログイン済み (URL: %s)", current_url)
                 return True
 
-            # メールアドレス入力
-            await self._page.fill('input[name="email"]', self.settings.MF_EMAIL)
-            await self._page.click('button[type="submit"]')
-            await self._random_wait()
+            logger.info("ログインページ検出 (URL: %s) — 認証情報でログイン試行", current_url)
 
-            # パスワード入力
-            await self._page.fill('input[name="password"]', self.settings.MF_PASSWORD)
-            await self._page.click('button[type="submit"]')
+            if not self.settings.MF_EMAIL or not self.settings.MF_PASSWORD:
+                logger.error("MF_EMAIL / MF_PASSWORD が未設定です。~/.assetbridge/.env を確認してください。")
+                return False
+
+            # ssnb ログインフォームのセレクタ（実際の DOM に合わせた名前）
+            EMAIL_SEL = 'input[name="sign_in_session_service[email]"]'
+            PASS_SEL = 'input[name="sign_in_session_service[password]"]'
+            SUBMIT_SEL = 'input[name="commit"][type="submit"]'
+
+            await self._page.wait_for_selector(EMAIL_SEL, timeout=10000)
+            await self._page.fill(EMAIL_SEL, self.settings.MF_EMAIL)
+            await self._page.fill(PASS_SEL, self.settings.MF_PASSWORD)
+            await self._page.click(SUBMIT_SEL)
             await self._random_wait(2.0, 4.0)
 
             # 2FA チェック（URL でトリガー判定）
             current_url = self._page.url
-            if "two_factor" in current_url or "otp" in current_url.lower():
-                await self._handle_2fa()
+            _2fa_patterns = ("two_factor", "two_step_verif", "otp", "mfa")
+            if any(p in current_url.lower() for p in _2fa_patterns):
+                ok = await self._handle_2fa()
+                if not ok:
+                    return False
 
-            # ssnb.x.moneyforward.com へのリダイレクトでログイン成功を確認
-            await self._page.wait_for_url("**/ssnb.x.moneyforward.com/**", timeout=15000)
+            # ログイン完了待ち（sign_in / two_step 以外の ssnb ページへ遷移を確認）
+            await self._page.wait_for_function(
+                "() => {"
+                "  const url = window.location.href;"
+                "  return url.includes('ssnb.x.moneyforward.com')"
+                "    && !url.includes('sign_in')"
+                "    && !url.includes('two_step');"
+                "}",
+                timeout=360000,  # 2FAコード入力を最大6分待つ
+            )
 
             # セッション Cookie を暗号化保存
             cookies = await self._context.cookies()
             self.session_manager.save_session(cookies)
-            logger.info("ログイン成功・セッション保存")
+            logger.info("ログイン成功・セッション保存 (URL: %s)", self._page.url)
             return True
 
         except Exception as e:
-            logger.error("ログインエラー: %s", e)
+            import traceback
+            logger.error("ログインエラー: %s\n%s", e, traceback.format_exc())
             await self._save_screenshot("login_error")
             return False
 
-    async def _handle_2fa(self) -> None:
-        if self.settings.MF_TOTP_SEED:
-            import pyotp  # type: ignore[import]
-            totp = pyotp.TOTP(self.settings.MF_TOTP_SEED)
-            code = totp.now()
-            logger.info("TOTP 2FA: 自動入力")
-            await self._page.fill('input[name="otp"]', code)
-            await self._page.click('button[type="submit"]')
-        else:
-            # SMS 2FA: 将来 Discord 連携で実装予定（現在は手動入力待ち）
-            logger.warning("SMS 2FA が必要ですが未実装です。手動でコードを入力してください。")
-            await asyncio.sleep(300)  # 5分タイムアウト
+    async def _handle_2fa(self) -> bool:
+        """2FA（TOTP / メール認証）を処理する。成功したら True を返す。"""
+        current_url = self._page.url
+        logger.info("2FA ページ検出: %s", current_url)
+
+        # TOTP 自動入力（MF_TOTP_SEED が有効な Base32 の場合）
+        import os, base64
+        totp_seed = self.settings.MF_TOTP_SEED
+        if totp_seed:
+            try:
+                # Base32 デコードで妥当性確認（非ASCII や無効なBase32はここで弾く）
+                base64.b32decode(totp_seed.upper().replace(" ", ""), casefold=True)
+                import pyotp  # type: ignore[import]
+                totp = pyotp.TOTP(totp_seed)
+                code = totp.now()
+                logger.info("TOTP 2FA: 自動入力")
+                await self._page.fill('input[name="verification_code"]', code)
+                await self._page.click('input[name="commit"][type="submit"]')
+                return True
+            except Exception as e:
+                logger.warning("TOTP_SEED が無効なため TOTP をスキップ: %s", e)
+
+        # メール認証: 環境変数 MF_2FA_CODE が設定されていれば即時入力
+        env_code = os.environ.get("MF_2FA_CODE", "")
+        if env_code:
+            logger.info("MF_2FA_CODE からコード入力: %s", env_code)
+            # 方法1: 認証URLへ直接ナビゲート（MF メール認証の場合）
+            verify_url = f"{self.BASE_URL}/users/two_step_verifications/verify/{env_code}"
+            try:
+                await self._page.goto(verify_url, wait_until="networkidle")
+                if "two_step" not in self._page.url:
+                    logger.info("URL 認証成功: %s", self._page.url)
+                    return True
+            except Exception:
+                pass
+            # 方法2: フォームに入力して送信
+            await self._page.fill('input[name="verification_code"]', env_code)
+            await self._page.click('input[name="commit"][type="submit"]')
+            return True
+
+        # 手動入力モード: コードファイルを監視（300秒タイムアウト）
+        code_file = "/tmp/mf_2fa_code.txt"
+        logger.warning(
+            "メール 2FA が必要です。以下のいずれかでコードを入力してください:\n"
+            "  1) echo <コード> > %s\n"
+            "  2) 環境変数 MF_2FA_CODE=<コード> を設定して再実行",
+            code_file,
+        )
+        for _ in range(60):  # 10秒×60回 = 10分
+            await asyncio.sleep(10)
+            if os.path.exists(code_file):
+                with open(code_file) as f:
+                    code = f.read().strip()
+                os.remove(code_file)
+                if code:
+                    logger.info("ファイルからコード取得: %s", code)
+                    await self._page.fill('input[name="verification_code"]', code)
+                    await self._page.click('input[name="commit"][type="submit"]')
+                    return True
+        logger.error("2FA タイムアウト（10分）")
+        return False
 
     async def scrape(self) -> dict:
         """スクレイプ全体を実行し、実行ログを scrape_logs に記録する。"""
@@ -94,6 +159,19 @@ class MFSBIScraper(BaseScraper):
             log_repo = ScrapeLogRepository(db)
             scrape_log = log_repo.start()
             log_id: int = scrape_log.id
+
+        # 一括更新ボタンをクリックして最新データを取得
+        try:
+            await self._page.goto(f"{self.BASE_URL}/", wait_until="networkidle")
+            refresh_btn = await self._page.query_selector('a.refresh, a[href*="aggregation_queue"]')
+            if refresh_btn:
+                await refresh_btn.click()
+                logger.info("一括更新クリック済み。データ更新待機中...")
+                await asyncio.sleep(10)  # 更新処理の待機
+            else:
+                logger.warning("一括更新ボタンが見つかりませんでした")
+        except Exception as e:
+            logger.warning("一括更新エラー（継続）: %s", e)
 
         await self._page.goto(self.PORTFOLIO_URL, wait_until="networkidle")
         await self._random_wait()
@@ -149,24 +227,33 @@ class MFSBIScraper(BaseScraper):
     async def _scrape_total(self) -> dict:
         """総資産とカテゴリ別内訳を取得する。
         NOTE: セレクタは MF の UI 変更により変わる可能性あり。変更時は要確認。
+
+        HTML 構造:
+          - 総資産: div.heading-radius-box の inner_text に "資産総額：\n38,247,980円" 形式
+          - カテゴリ行: table tr 要素で th=1, td=2 の構造（最初の5行がカテゴリサマリー）
+            - th > a = カテゴリ名
+            - 最初の td = 金額
         """
-        total_text = await self._page.inner_text(".total-assets-value, .bs-total-assets")
+        # 総資産テキストから金額を抽出（"資産総額：\n38,247,980円" 形式）
+        total_el = await self._page.query_selector(".heading-radius-box")
+        total_text = await total_el.inner_text() if total_el else ""
         total_jpy = self._parse_jpy(total_text)
 
+        # カテゴリ別内訳（th=1, td=2 の行をカテゴリサマリーとして取得）
         breakdown: dict[str, float] = {}
-        # カテゴリ別内訳（現金/株式/投資信託/暗号資産/年金/ポイント等）
-        # NOTE: セレクタは MF の UI 変更により変わる可能性あり
-        category_items = await self._page.query_selector_all(
-            ".asset-category-item, .category-list-item"
-        )
-        for item in category_items:
+        trs = await self._page.query_selector_all("table tr")
+        for tr in trs:
             try:
-                name_el = await item.query_selector(".category-name, .asset-type-name")
-                value_el = await item.query_selector(".category-value, .asset-type-value")
-                if name_el and value_el:
-                    name = (await name_el.inner_text()).strip()
-                    value = self._parse_jpy(await value_el.inner_text())
-                    breakdown[name] = value
+                ths = await tr.query_selector_all("th")
+                tds = await tr.query_selector_all("td")
+                # カテゴリサマリー行の判定: th=1, td=2
+                if len(ths) == 1 and len(tds) == 2:
+                    link = await ths[0].query_selector("a")
+                    if link:
+                        name = (await link.inner_text()).strip()
+                        value = self._parse_jpy(await tds[0].inner_text())
+                        if name and value > 0:
+                            breakdown[name] = value
             except Exception:
                 pass
 
@@ -175,27 +262,64 @@ class MFSBIScraper(BaseScraper):
     async def _scrape_holdings(self) -> list[dict]:
         """保有銘柄一覧を取得する。
         NOTE: セレクタは MF の UI 変更により変わる可能性あり。変更時は要確認。
+
+        HTML 構造:
+          - 株式等の保有行: table tr で td=13
+            - td[0]=コード, td[1]=銘柄名, td[2]=保有数, td[3]=平均取得単価,
+              td[4]=現在値, td[5]=評価額(円含む), td[6]=前日比,
+              td[7]=評価損益(円含む), td[8]=評価損益率(%含む), td[9]=保有機関
+          - 現金・預金行: table tr で td=5
+            - td[0]=名称, td[1]=残高(円含む), td[2]=保有機関
         """
         holdings: list[dict] = []
-        # NOTE: セレクタは MF の UI 変更により変わる可能性あり
-        holding_rows = await self._page.query_selector_all(
-            ".portfolio-table tr, .asset-list-item"
-        )
+        trs = await self._page.query_selector_all("table tr")
 
-        for row in holding_rows:
+        for tr in trs:
             try:
-                cells = await row.query_selector_all("td")
-                if len(cells) < 3:
-                    continue
+                cells = await tr.query_selector_all("td")
 
-                holding = {
-                    "name": (await cells[0].inner_text()).strip(),
-                    "quantity": 0.0,
-                    "value_jpy": 0.0,
-                    "cost_basis_jpy": 0.0,
-                    "unrealized_pnl_jpy": 0.0,
-                }
-                holdings.append(holding)
+                if len(cells) == 13:
+                    # 株式・ETF・投資信託の保有行
+                    name = (await cells[1].inner_text()).strip()
+                    if not name:
+                        continue
+                    holding = {
+                        "code": (await cells[0].inner_text()).strip(),
+                        "name": name,
+                        "quantity": self._parse_number(await cells[2].inner_text()),
+                        "cost_price": self._parse_number(await cells[3].inner_text()),
+                        "current_price": self._parse_number(await cells[4].inner_text()),
+                        "value_jpy": self._parse_jpy(await cells[5].inner_text()),
+                        "prev_day_diff_jpy": self._parse_jpy(await cells[6].inner_text()),
+                        "unrealized_pnl_jpy": self._parse_jpy(await cells[7].inner_text()),
+                        "unrealized_pnl_pct": self._parse_pct(await cells[8].inner_text()),
+                        "broker": (await cells[9].inner_text()).strip(),
+                        "asset_type": "stock",
+                    }
+                    holdings.append(holding)
+
+                elif len(cells) == 5:
+                    # 現金・預金・ポイント行
+                    name = (await cells[0].inner_text()).strip()
+                    value_text = (await cells[1].inner_text()).strip()
+                    value = self._parse_jpy(value_text)
+                    if not name or value <= 0:
+                        continue
+                    broker = (await cells[2].inner_text()).strip()
+                    holding = {
+                        "code": "",
+                        "name": name,
+                        "quantity": 1.0,
+                        "cost_price": value,
+                        "current_price": value,
+                        "value_jpy": value,
+                        "prev_day_diff_jpy": 0.0,
+                        "unrealized_pnl_jpy": 0.0,
+                        "unrealized_pnl_pct": 0.0,
+                        "broker": broker,
+                        "asset_type": "cash",
+                    }
+                    holdings.append(holding)
             except Exception:
                 pass
 
@@ -214,6 +338,22 @@ class MFSBIScraper(BaseScraper):
 
         # TODO: 月別収支データ取得を実装（MF の CF ページ構造確認後に追加）
         return []
+
+    def _parse_number(self, text: str) -> float:
+        """「1,717」「19.65」形式のテキストを float に変換する。"""
+        cleaned = re.sub(r"[^0-9.]", "", text.replace(",", ""))
+        try:
+            return float(cleaned)
+        except ValueError:
+            return 0.0
+
+    def _parse_pct(self, text: str) -> float:
+        """「138.26%」形式のテキストを float に変換する。"""
+        cleaned = re.sub(r"[^0-9.\-]", "", text)
+        try:
+            return float(cleaned)
+        except ValueError:
+            return 0.0
 
     def _parse_jpy(self, text: str) -> float:
         """「1,234,567円」形式のテキストを float に変換する。"""

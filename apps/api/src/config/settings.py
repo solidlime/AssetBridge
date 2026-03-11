@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, field_validator
 from cryptography.fernet import Fernet
 from pathlib import Path
 import secrets
@@ -46,6 +46,22 @@ class Settings(BaseSettings):
     # セキュリティ
     API_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
     ENCRYPTION_KEY: str = Field(default_factory=lambda: Fernet.generate_key().decode())
+
+    @field_validator("ENCRYPTION_KEY", mode="before")
+    @classmethod
+    def validate_encryption_key(cls, v: str) -> str:
+        """無効な値や空の場合は Fernet.generate_key() で自動生成する。"""
+        if not v:
+            return Fernet.generate_key().decode()
+        try:
+            Fernet(v.encode() if isinstance(v, str) else v)
+            return v
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "ENCRYPTION_KEY が無効な値です。自動生成したキーで起動します。"
+            )
+            return Fernet.generate_key().decode()
 
     # サービス設定
     API_HOST: str = "0.0.0.0"
