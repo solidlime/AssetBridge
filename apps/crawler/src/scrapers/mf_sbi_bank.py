@@ -166,8 +166,8 @@ class MFSBIScraper(BaseScraper):
             refresh_btn = await self._page.query_selector('a.refresh, a[href*="aggregation_queue"]')
             if refresh_btn:
                 await refresh_btn.click()
-                logger.info("一括更新クリック済み。データ更新待機中...")
-                await asyncio.sleep(10)  # 更新処理の待機
+                logger.info("一括更新クリック済み。30分後にスクレイプ開始...")
+                await asyncio.sleep(1800)  # MF のサーバー側集計完了まで30分待機
             else:
                 logger.warning("一括更新ボタンが見つかりませんでした")
         except Exception as e:

@@ -49,4 +49,18 @@ export const api = {
     trigger: () => post<any>("/scrape/trigger"),
     status: () => get<any>("/scrape/status"),
   },
+  settings: {
+    getSystemPrompt: () => get<{ prompt: string }>("/settings/system-prompt"),
+    updateSystemPrompt: (prompt: string) =>
+      fetch(`${API_URL}/api/settings/system-prompt`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ prompt }),
+      }).then((r) => r.json()),
+  },
+  aiComments: {
+    portfolio: () => get<{ comment: string }>("/ai/comments/portfolio"),
+    pnl: () => get<{ comment: string }>("/ai/comments/pnl"),
+    refresh: () => post<{ portfolio: string; pnl: string }>("/ai/comments/refresh"),
+  },
 };

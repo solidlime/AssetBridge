@@ -13,6 +13,7 @@ const navItems = [
   { href: "/insights", label: "インサイト", icon: "🔍" },
   { href: "/linked-services", label: "連携サービス", icon: "🔗" },
   { href: "/simulator", label: "シミュレーター", icon: "🎯" },
+  { href: "/settings", label: "設定", icon: "⚙️" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -3,20 +3,35 @@ import AssetHistoryChart from "@/components/charts/AssetHistoryChart";
 
 async function getData() {
   try {
-    const [summary, history, allocation, pnl] = await Promise.all([
+    const [summary, history, allocation, pnl, portfolioComment, pnlComment] = await Promise.all([
       api.portfolio.summary(),
       api.portfolio.history(30),
       api.insights.allocation(),
       api.insights.pnlRanking(5),
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/ai/comments/portfolio`, {
+        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" },
+        cache: "no-store",
+      }).then((r) => (r.ok ? r.json() : { comment: null })).catch(() => ({ comment: null })),
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/ai/comments/pnl`, {
+        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" },
+        cache: "no-store",
+      }).then((r) => (r.ok ? r.json() : { comment: null })).catch(() => ({ comment: null })),
     ]);
-    return { summary, history, allocation, pnl };
+    return {
+      summary,
+      history,
+      allocation,
+      pnl,
+      portfolioComment: (portfolioComment as { comment: string | null })?.comment ?? null,
+      pnlComment: (pnlComment as { comment: string | null })?.comment ?? null,
+    };
   } catch {
-    return { summary: null, history: null, allocation: null, pnl: null };
+    return { summary: null, history: null, allocation: null, pnl: null, portfolioComment: null, pnlComment: null };
   }
 }
 
 export default async function DashboardPage() {
-  const { summary, history, pnl } = await getData();
+  const { summary, history, pnl, portfolioComment, pnlComment } = await getData();
   const diffJpy = summary?.prev_day_diff_jpy ?? 0;
   const diffPct = summary?.prev_day_diff_pct ?? 0;
   const sign = diffJpy >= 0 ? "+" : "";
@@ -61,11 +76,11 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* AIコメントカード */}
-      {summary?.ai_comment && (
+      {/* AIコメント - ポートフォリオ総評 */}
+      {portfolioComment && (
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24, borderLeft: "3px solid #60a5fa" }}>
           <div style={{ fontSize: 12, color: "#60a5fa", marginBottom: 8 }}>AI コメント</div>
-          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#e2e8f0" }}>{summary.ai_comment}</p>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#e2e8f0" }}>{portfolioComment}</p>
         </div>
       )}
 
@@ -98,6 +113,14 @@ export default async function DashboardPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* AIコメント - 含み損益評価 */}
+      {pnlComment && (
+        <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24, borderLeft: "3px solid #10b981" }}>
+          <div style={{ fontSize: 12, color: "#10b981", marginBottom: 8 }}>銘柄 AI コメント</div>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#e2e8f0" }}>{pnlComment}</p>
         </div>
       )}
 

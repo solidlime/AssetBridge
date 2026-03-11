@@ -161,3 +161,15 @@ class ScrapeLog(Base):
     error_message = Column(Text, nullable=True)
     screenshot_path = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AppSettings(Base):
+    """アプリケーション設定を KV 形式で永続化するテーブル。
+    system_prompt などの可変設定を DB で管理することで、再起動なしに変更可能にする。
+    """
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(100), nullable=False, unique=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
