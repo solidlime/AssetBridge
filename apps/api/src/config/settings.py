@@ -13,6 +13,10 @@ _ENV_PATH = Path(
     )
 )
 
+# プロジェクトルート: apps/api/src/config/settings.py から5階層上
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+_DEFAULT_DB_URL = f"sqlite:///{_PROJECT_ROOT.as_posix()}/data/assetbridge.db"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -22,7 +26,7 @@ class Settings(BaseSettings):
     )
 
     # Database
-    DATABASE_URL: str = "sqlite:///./data/assetbridge.db"
+    DATABASE_URL: str = _DEFAULT_DB_URL
 
     # マネーフォワード for 住信SBI銀行
     MF_EMAIL: str = ""
@@ -47,20 +51,30 @@ class Settings(BaseSettings):
     API_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
     ENCRYPTION_KEY: str = Field(default_factory=lambda: Fernet.generate_key().decode())
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def resolve_database_url(cls, v: str) -> str:
+        """sqlite:///./... の相対パスをプロジェクトルート基準の絶対パスに変換する。"""
+        if not isinstance(v, str) or not v.startswith("sqlite:///"):
+            return v
+        path_part = v[len("sqlite:///"):]
+        if Path(path_part).is_absolute():
+            return v
+        # 相対パス（./data/... または data/...）→ 絶対パスへ変換
+        rel = path_part.lstrip("./")
+        abs_path = (_PROJECT_ROOT / rel).resolve()
+        return f"sqlite:///{abs_path.as_posix()}"
+
     @field_validator("ENCRYPTION_KEY", mode="before")
     @classmethod
     def validate_encryption_key(cls, v: str) -> str:
-        """無効な値や空の場合は Fernet.generate_key() で自動生成する。"""
+        """無効な値や空の場合は Fernet.generate_key() で自動生成する（警告なし）。"""
         if not v:
             return Fernet.generate_key().decode()
         try:
             Fernet(v.encode() if isinstance(v, str) else v)
             return v
         except Exception:
-            import logging
-            logging.getLogger(__name__).warning(
-                "ENCRYPTION_KEY が無効な値です。自動生成したキーで起動します。"
-            )
             return Fernet.generate_key().decode()
 
     # サービス設定
