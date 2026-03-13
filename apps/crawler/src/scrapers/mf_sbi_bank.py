@@ -366,14 +366,17 @@ class MFSBIScraper(BaseScraper):
     async def _save_to_db(self, data: dict) -> int:
         """スクレイプデータを DB に保存する。保存件数を返す。"""
         from apps.api.src.db.database import db_session
-        from apps.api.src.db.repositories import DailyTotalRepository
+        from apps.api.src.db.repositories import DailyTotalRepository, AssetRepository, SnapshotRepository
 
         records = 0
         today = date.today()
 
         with db_session() as db:
             daily_repo = DailyTotalRepository(db)
+            asset_repo = AssetRepository(db)
+            snap_repo = SnapshotRepository(db)
 
+            # 1. DailyTotal（総資産・カテゴリ別内訳）を保存
             total_data = data.get("total", {})
             total_jpy = total_data.get("total_jpy")
             if total_jpy:
@@ -382,7 +385,6 @@ class MFSBIScraper(BaseScraper):
                 diff = total_jpy - prev_total
                 diff_pct = (diff / prev_total * 100.0) if prev_total else 0.0
 
-                # カテゴリ別内訳を DailyTotal のカラムにマッピング
                 breakdown = total_data.get("breakdown", {})
                 category_kwargs: dict[str, float] = {}
                 for category_name, column_name in CATEGORY_COLUMN_MAP.items():
@@ -398,4 +400,51 @@ class MFSBIScraper(BaseScraper):
                 )
                 records += 1
 
+            # 2. 保有銘柄を assets + portfolio_snapshots に保存
+            for holding in data.get("holdings", []):
+                symbol = (holding.get("code") or holding.get("name", ""))[:50]
+                name = holding.get("name", symbol)
+                if not symbol or not name:
+                    continue
+
+                asset_type = self._detect_asset_type(holding.get("code", ""))
+                asset = asset_repo.upsert(
+                    symbol=symbol,
+                    name=name,
+                    asset_type=asset_type,
+                    currency="JPY",
+                )
+                quantity = holding.get("quantity", 0.0)
+                cost_price = holding.get("cost_price", 0.0)
+                snap_repo.upsert(
+                    asset_id=asset.id,
+                    snapshot_date=today,
+                    quantity=quantity,
+                    price_jpy=holding.get("current_price", 0.0),
+                    value_jpy=holding.get("value_jpy", 0.0),
+                    cost_basis_jpy=cost_price * quantity,
+                    unrealized_pnl_jpy=holding.get("unrealized_pnl_jpy", 0.0),
+                    unrealized_pnl_pct=holding.get("unrealized_pnl_pct", 0.0),
+                )
+                records += 1
+
+        logger.info("DB保存完了: %d 件 (daily_totals + %d holdings)", records, records - 1)
         return records
+
+    @staticmethod
+    def _detect_asset_type(code: str) -> "AssetType":
+        """銘柄コードから AssetType を推測する。
+        - 4〜5桁の数字     → STOCK_JP（日本株・ETF）
+        - 英字のみ 1〜6文字 → STOCK_US（米国株）
+        - 英数字混在       → FUND（投資信託）
+        - 空文字           → CASH
+        """
+        from apps.api.src.db.models import AssetType
+        c = code.strip()
+        if not c:
+            return AssetType.CASH
+        if re.match(r"^\d{4,5}$", c):
+            return AssetType.STOCK_JP
+        if re.match(r"^[A-Za-z]{1,6}$", c):
+            return AssetType.STOCK_US
+        return AssetType.FUND

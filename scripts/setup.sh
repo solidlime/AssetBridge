@@ -271,6 +271,21 @@ echo "  Ctrl+C で全サービスを停止"
 echo "========================================"
 echo ""
 
+# スクレイパー自動起動（API 起動待ち後にトリガー）
+info "スクレイパーを自動起動します（API 準備完了後）..."
+(
+  for _ in $(seq 1 30); do
+    if curl -sf "http://localhost:${API_PORT}/health" >/dev/null 2>&1; then
+      curl -s -X POST "http://localhost:${API_PORT}/api/scrape/trigger" \
+        -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" >/dev/null
+      echo "[INFO] スクレイパートリガー送信済み（一括更新→30分後にデータ取得）"
+      exit 0
+    fi
+    sleep 2
+  done
+  echo "[WARN] API が起動しなかったためスクレイパーをスキップ"
+) &
+
 # Ctrl+C で全プロセスを終了
 cleanup() {
   echo ""
