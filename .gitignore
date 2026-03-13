@@ -29,8 +29,14 @@ out/
 data/assetbridge.db
 data/sessions/
 data/screenshots/
+data/*.png
+data/*.jpg
+apps/api/data/
 !data/.gitkeep
 !data/sessions/.gitkeep
+
+# Artifact directories
+d/
 
 # Logs
 *.log

@@ -53,3 +53,54 @@ class AppSettingsRepository:
     def set_ai_comment_ttl_hours(self, hours: int) -> None:
         """AI コメントキャッシュの TTL（時間）を保存する。"""
         self.set("ai_comment_ttl_hours", str(hours))
+
+    # --- Discord Bot 設定 ---
+
+    def get_discord_token(self) -> str:
+        """Discord Bot トークンを返す。未設定の場合は空文字を返す。"""
+        return self.get("discord_token") or ""
+
+    def set_discord_token(self, token: str) -> None:
+        """Discord Bot トークンを保存する。"""
+        self.set("discord_token", token)
+
+    def get_discord_channel_id(self) -> str:
+        """通知先の Discord チャンネル ID を返す。未設定の場合は空文字を返す。"""
+        return self.get("discord_channel_id") or ""
+
+    def set_discord_channel_id(self, channel_id: str) -> None:
+        """通知先の Discord チャンネル ID を保存する。"""
+        self.set("discord_channel_id", channel_id)
+
+    # --- MCP Server 設定 ---
+
+    def get_mcp_host(self) -> str:
+        """MCP サーバーのバインドアドレスを返す。未設定の場合は '0.0.0.0' を返す。"""
+        return self.get("mcp_host") or "0.0.0.0"
+
+    def get_mcp_port(self) -> int:
+        """MCP サーバーのポート番号を返す。未設定の場合は 8001 を返す。"""
+        return int(self.get("mcp_port") or "8001")
+
+    def set_mcp_settings(self, host: str, port: int) -> None:
+        """MCP サーバーの host / port を保存する。"""
+        self.set("mcp_host", host)
+        self.set("mcp_port", str(port))
+
+    # --- LLM 設定 ---
+
+    def get_llm_model(self) -> str:
+        """使用する LLM モデル名を返す。未設定の場合は空文字を返す。"""
+        return self.get("llm_model") or ""
+
+    def set_llm_model(self, model: str) -> None:
+        """使用する LLM モデル名を保存する。"""
+        self.set("llm_model", model)
+
+    def get_llm_api_key(self, provider: str) -> str:
+        """指定プロバイダーの API キーを返す。provider: anthropic | openai | gemini | openrouter"""
+        return self.get(f"llm_key_{provider}") or ""
+
+    def set_llm_api_key(self, provider: str, key: str) -> None:
+        """指定プロバイダーの API キーを保存する。provider: anthropic | openai | gemini | openrouter"""
+        self.set(f"llm_key_{provider}", key)

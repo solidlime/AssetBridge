@@ -50,7 +50,7 @@ export default function IncomeExpenseChart({ data }: Props) {
           contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }}
           labelStyle={{ color: "#94a3b8" }}
           formatter={(value: number, name: string) => [
-            `¥${value.toLocaleString("ja-JP")}`,
+            `¥${Math.round(value).toLocaleString("ja-JP")}`,
             name === "income_jpy" ? "収入" : "支出",
           ]}
         />

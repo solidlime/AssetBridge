@@ -62,7 +62,7 @@ export default function SimulatorChart({ data }: Props) {
           labelFormatter={(v: number) => `${v}年後`}
           formatter={(value: number, name: string) => {
             const cfg = PERCENTILE_CONFIG.find((c) => c.key === name);
-            return [`¥${value.toLocaleString("ja-JP")}`, cfg?.label ?? name];
+            return [`¥${Math.round(value).toLocaleString("ja-JP")}`, cfg?.label ?? name];
           }}
         />
         <Legend

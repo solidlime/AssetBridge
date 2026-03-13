@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { formatJpy } from "@/lib/format";
 
 async function getAssets(type: string) {
   try {
@@ -75,9 +76,9 @@ export default async function AssetsPage({
                       <div style={{ fontSize: 12, color: "#94a3b8" }}>{a.name}</div>
                     </td>
                     <td style={{ textAlign: "right", padding: "10px 0" }}>{a.quantity}</td>
-                    <td style={{ textAlign: "right", padding: "10px 0" }}>¥{a.value_jpy.toLocaleString("ja-JP")}</td>
+                    <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(a.value_jpy)}</td>
                     <td style={{ textAlign: "right", padding: "10px 0", color: c }}>
-                      {s}¥{Math.abs(pnl).toLocaleString("ja-JP")}
+                      {s}{formatJpy(Math.abs(pnl))}
                     </td>
                     <td style={{ textAlign: "right", padding: "10px 0", color: c }}>
                       {s}{a.unrealized_pnl_pct.toFixed(2)}%

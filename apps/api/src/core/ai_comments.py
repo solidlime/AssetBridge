@@ -64,9 +64,15 @@ async def generate_portfolio_comment(system_prompt: str | None = None) -> str:
     diff_pct = getattr(latest, "prev_day_diff_pct", 0) or 0
     sign = "+" if diff_jpy >= 0 else ""
 
-    context = f"""現在の資産状況:
+    # 7日間のトレンドを計算（history の先頭が最古レコード）
+    first = history[0]
+    trend_jpy = (getattr(latest, "total_jpy", 0) or 0) - (getattr(first, "total_jpy", 0) or 0)
+    trend_sign = "+" if trend_jpy >= 0 else ""
+
+    context = f"""現在の資産状況 ({getattr(latest, 'date', '今日')}):
 - 総資産: ¥{getattr(latest, 'total_jpy', 0) or 0:,.0f}
 - 前日比: {sign}¥{diff_jpy:,.0f} ({sign}{diff_pct:.2f}%)
+- 7日間変動: {trend_sign}¥{trend_jpy:,.0f}
 - 日本株: ¥{getattr(latest, 'stock_jp_jpy', 0) or 0:,.0f}
 - 米国株: ¥{getattr(latest, 'stock_us_jpy', 0) or 0:,.0f}
 - 投資信託: ¥{getattr(latest, 'fund_jpy', 0) or 0:,.0f}

@@ -1,6 +1,6 @@
 #!/bin/bash
-# AssetBridge 環境セットアップ + 起動スクリプト
-# 使用方法: bash scripts/setup.sh [OPTIONS]
+# AssetBridge セットアップ + 起動スクリプト（Linux / macOS 版）
+# 使用方法: bash scripts/setup_linux.sh [OPTIONS]
 #
 #   --no-start      セットアップのみ実行（サーバー起動しない）
 #   --install-deps  依存関係を強制的に再インストール（初回は自動検出）
@@ -55,29 +55,27 @@ error()   { echo -e "${RED}[ERR]${RESET}  $*"; }
 
 echo ""
 echo "========================================"
-echo "  AssetBridge セットアップ"
+echo "  AssetBridge セットアップ（Linux/macOS）"
 echo "========================================"
 echo ""
 
 # =========================================================
-# ポート解放ユーティリティ（Windows: PowerShell / Unix: lsof）
+# ポート解放ユーティリティ（lsof 優先、fuser フォールバック）
 # =========================================================
 kill_port() {
   local port=$1
-  if powershell.exe -NonInteractive -NoProfile -Command \
-      "Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | \
-       ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force -ErrorAction SilentlyContinue }" \
-      >/dev/null 2>&1; then
-    # PowerShell 成功（Windows）
-    sleep 1
-  elif command -v lsof &>/dev/null; then
-    # Unix / Mac
-    local pid
+  local pid=""
+
+  if command -v lsof &>/dev/null; then
     pid=$(lsof -ti:"$port" 2>/dev/null | head -1)
     if [ -n "$pid" ]; then
+      info "ポート ${port} の既存プロセス (PID: ${pid}) を終了中..."
       kill -9 "$pid" 2>/dev/null || true
       sleep 1
     fi
+  elif command -v fuser &>/dev/null; then
+    fuser -k "${port}/tcp" 2>/dev/null || true
+    sleep 1
   fi
 }
 
@@ -101,7 +99,9 @@ for cmd in python3 python python3.12 python3.11; do
 done
 
 if [ -z "$PYTHON_CMD" ]; then
-  error "Python 3.11 以上が必要です。インストールしてください。"
+  error "Python 3.11 以上が必要です。"
+  error "  Ubuntu/Debian: sudo apt install python3.12"
+  error "  macOS:         brew install python@3.12"
   exit 1
 fi
 success "Python $VER ($PYTHON_CMD)"
@@ -118,17 +118,8 @@ else
   success ".venv は既に存在します"
 fi
 
-# Activate (Windows Git Bash / Unix 両対応)
-if [ -f "$VENV_DIR/Scripts/activate" ]; then
-  # shellcheck disable=SC1091
-  source "$VENV_DIR/Scripts/activate"
-elif [ -f "$VENV_DIR/bin/activate" ]; then
-  # shellcheck disable=SC1091
-  source "$VENV_DIR/bin/activate"
-else
-  error "仮想環境のアクティベートに失敗しました"
-  exit 1
-fi
+# shellcheck disable=SC1091
+source "$VENV_DIR/bin/activate"
 success "仮想環境アクティベート完了"
 
 # =========================================================
@@ -144,6 +135,8 @@ if [ "$SKIP_DEPS" = false ]; then
   if ! python -c "from playwright.sync_api import sync_playwright; sync_playwright().__enter__().chromium.launch().close()" &>/dev/null 2>&1; then
     info "Playwright Chromium をインストール中..."
     playwright install chromium
+    # Linux では依存ライブラリも必要
+    playwright install-deps chromium 2>/dev/null || true
     success "Playwright Chromium インストール完了"
   else
     success "Playwright Chromium は既にインストール済み"
@@ -164,8 +157,8 @@ if command -v pnpm &>/dev/null; then
     success "pnpm パッケージインストール完了"
   fi
 else
-  warn "pnpm が見つかりません。Web UI を使用する場合はインストールしてください:"
-  warn "  npm install -g pnpm"
+  warn "pnpm が見つかりません:"
+  warn "  curl -fsSL https://get.pnpm.io/install.sh | sh -"
 fi
 
 # =========================================================
@@ -189,7 +182,7 @@ else
   success "環境変数ファイル確認済み: $_ENV_FILE"
 fi
 
-# .env を読み込む（CRLF対策: sedで\rを除去してから読む）
+# .env を読み込む
 set -a
 # shellcheck disable=SC1090
 set +e
@@ -197,14 +190,14 @@ source <(sed 's/\r//' "$_ENV_FILE")
 set -e
 set +a
 
-# API_KEY が未設定なら生成して .env に追記（起動ごとに変わらないよう固定）
+# API_KEY が未設定なら生成して .env に追記
 if [ -z "${API_KEY:-}" ]; then
   API_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
   printf '\nAPI_KEY=%s\n' "$API_KEY" >> "$_ENV_FILE"
   info "API_KEY を生成して .env に保存しました"
 fi
 
-# apps/web/.env.local に接続情報を書き込み（Next.js が API に繋がるよう）
+# apps/web/.env.local に接続情報を書き込み
 _API_PORT="${API_PORT:-8000}"
 printf 'NEXT_PUBLIC_API_URL=http://localhost:%s\nNEXT_PUBLIC_API_KEY=%s\n' \
   "$_API_PORT" "$API_KEY" > "$PROJECT_ROOT/apps/web/.env.local"
@@ -216,7 +209,6 @@ success "apps/web/.env.local 更新済み"
 info "Step 6/6: データベース初期化"
 DB_FILE="${DATABASE_URL:-sqlite:///./data/assetbridge.db}"
 DB_PATH="${DB_FILE#sqlite:///}"
-# ./data/assetbridge.db → 絶対パスに変換
 if [[ "$DB_PATH" == ./* ]]; then
   DB_PATH="$PROJECT_ROOT/${DB_PATH:2}"
 fi
@@ -227,7 +219,6 @@ if [ ! -f "$DB_PATH" ]; then
   success "データベース初期化完了: $DB_PATH"
 else
   success "データベースは既に存在します: $DB_PATH"
-  # スキーママイグレーション（新テーブル追加のみ、データ保持）
   PYTHONPATH="$PROJECT_ROOT" python "$PROJECT_ROOT/scripts/setup_db.py" 2>/dev/null || true
 fi
 
@@ -244,15 +235,14 @@ echo "  データベース:  $DB_PATH"
 echo "  仮想環境:      $VENV_DIR"
 echo ""
 
-# =========================================================
-# サーバー起動
-# =========================================================
 if [ "$NO_START" = true ]; then
   info "--no-start: サーバー起動をスキップします"
-  info "起動するには: bash scripts/setup.sh"
   exit 0
 fi
 
+# =========================================================
+# サーバー起動
+# =========================================================
 echo "========================================"
 echo "  サービス起動"
 echo "========================================"
@@ -278,9 +268,9 @@ cd "$PROJECT_ROOT"
 sleep 2
 
 # ---- [2/2] Next.js ----
-info "[2/2] Next.js を起動中 (port ${WEB_PORT})..."
 WEB_PID=""
 if command -v pnpm &>/dev/null; then
+  info "[2/2] Next.js を起動中 (port ${WEB_PORT})..."
   cd "$PROJECT_ROOT/apps/web" && pnpm dev --port "$WEB_PORT" &
   WEB_PID=$!
   cd "$PROJECT_ROOT"
@@ -288,7 +278,7 @@ else
   warn "pnpm が見つからないため Next.js をスキップ"
 fi
 
-# ---- MCP Server（--with-mcp フラグ時のみ） ----
+# ---- MCP Server（オプション） ----
 MCP_PID=""
 if [ "$WITH_MCP" = true ]; then
   info "[+MCP] MCP サーバを起動中 (port ${MCP_PORT})..."
@@ -297,7 +287,7 @@ if [ "$WITH_MCP" = true ]; then
   cd "$PROJECT_ROOT"
 fi
 
-# ---- Discord Bot（--with-discord フラグ かつ DISCORD_TOKEN 設定済み時のみ） ----
+# ---- Discord Bot（オプション） ----
 BOT_PID=""
 if [ "$WITH_DISCORD" = true ]; then
   if [ -n "${DISCORD_TOKEN:-}" ]; then
@@ -316,23 +306,16 @@ echo "  サービス一覧"
 echo "========================================"
 echo "  FastAPI Swagger: http://localhost:${API_PORT}/docs"
 echo "  Web Dashboard:   http://localhost:${WEB_PORT}"
-if [ "$WITH_MCP" = true ]; then
-echo "  MCP Server:      http://localhost:${MCP_PORT}/mcp"
-fi
-if [ "$WITH_DISCORD" = true ] && [ -n "${DISCORD_TOKEN:-}" ]; then
-echo "  Discord Bot:     起動中"
-fi
+[ "$WITH_MCP" = true ] && echo "  MCP Server:      http://localhost:${MCP_PORT}/mcp"
 echo ""
-echo "  MCP / Discord Bot は Web UI の設定ページから起動できます"
-if [ "$AUTO_SCRAPE" = false ]; then
-echo "  スクレイパー:    手動実行 (--auto-scrape で自動化)"
-fi
+echo "  MCP / Discord Bot は Web UI 設定ページから起動できます"
+[ "$AUTO_SCRAPE" = false ] && echo "  スクレイパー:    手動実行 (--auto-scrape で自動化)"
 echo ""
 echo "  Ctrl+C で全サービスを停止"
 echo "========================================"
 echo ""
 
-# スクレイパー自動起動（--auto-scrape フラグがある場合のみ）
+# スクレイパー自動起動（オプション）
 if [ "$AUTO_SCRAPE" = true ]; then
   info "スクレイパーを自動起動します（API 準備完了後）..."
   (
@@ -340,7 +323,7 @@ if [ "$AUTO_SCRAPE" = true ]; then
       if curl -sf "http://localhost:${API_PORT}/health" >/dev/null 2>&1; then
         curl -s -X POST "http://localhost:${API_PORT}/api/scrape/trigger" \
           -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" >/dev/null
-        echo "[INFO] スクレイパートリガー送信済み（一括更新→30分後にデータ取得）"
+        echo "[INFO] スクレイパートリガー送信済み"
         exit 0
       fi
       sleep 2
@@ -362,7 +345,6 @@ cleanup() {
 
 trap cleanup INT TERM
 
-# 全バックグラウンドプロセスを待機（個別プロセスの失敗でスクリプトを停止しない）
 set +e
 wait
 set -e

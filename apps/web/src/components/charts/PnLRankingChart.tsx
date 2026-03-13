@@ -49,7 +49,7 @@ export default function PnLRankingChart({ ranking }: Props) {
           contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }}
           labelStyle={{ color: "#94a3b8" }}
           formatter={(value: number) => [
-            `¥${value.toLocaleString("ja-JP")}`,
+            `¥${Math.round(value).toLocaleString("ja-JP")}`,
             "含み損益",
           ]}
         />

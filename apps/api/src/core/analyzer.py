@@ -23,6 +23,14 @@ class PortfolioAnalyzer:
                 "total_jpy": latest.total_jpy if latest else 0,
                 "prev_day_diff_jpy": latest.prev_day_diff_jpy if latest else 0,
                 "prev_day_diff_pct": latest.prev_day_diff_pct if latest else 0,
+                "breakdown": {
+                    "stock_jp_jpy": latest.stock_jp_jpy if latest else 0,
+                    "stock_us_jpy": latest.stock_us_jpy if latest else 0,
+                    "fund_jpy": latest.fund_jpy if latest else 0,
+                    "crypto_jpy": latest.crypto_jpy if latest else 0,
+                    "cash_jpy": latest.cash_jpy if latest else 0,
+                    "pension_jpy": latest.pension_jpy if latest else 0,
+                } if latest else {},
                 "top_gainers": [self._snapshot_to_dict(s, db) for s in ranked[:5]],
                 "top_losers": [self._snapshot_to_dict(s, db) for s in ranked[-5:]],
             }

@@ -40,7 +40,7 @@ function filterByPeriod(data: DataPoint[], period: Period): DataPoint[] {
 }
 
 const tooltipFormatter = (value: number) =>
-  [`¥${value.toLocaleString("ja-JP")}`, "総資産"];
+  [`¥${Math.round(value).toLocaleString("ja-JP")}`, "総資産"];
 
 export default function AssetHistoryChart({ data }: Props) {
   const [period, setPeriod] = useState<Period>("1M");

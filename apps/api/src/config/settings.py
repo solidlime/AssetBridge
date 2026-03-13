@@ -3,18 +3,21 @@ from pydantic import Field, field_validator
 from cryptography.fernet import Fernet
 from pathlib import Path
 import secrets
+import os
 
-# .env は ~/.assetbridge/.env に隔離（Claude Code のプロジェクトスコープ外）
-# ASSETBRIDGE_ENV_PATH 環境変数で上書き可能
+# .env ファイルの解決順序:
+#   1. ASSETBRIDGE_ENV_PATH 環境変数（明示的な上書き）
+#   2. ~/.assetbridge/.env（本番・デバッグ用の隔離ファイル）
+#   3. <プロジェクトルート>/.env（~/.assetbridge/.env が存在しない場合のフォールバック）
+_HOME_ENV = Path.home() / ".assetbridge" / ".env"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+_FALLBACK_ENV = _PROJECT_ROOT / ".env"
+
 _ENV_PATH = Path(
-    __import__("os").environ.get(
-        "ASSETBRIDGE_ENV_PATH",
-        str(Path.home() / ".assetbridge" / ".env"),
-    )
+    os.environ.get("ASSETBRIDGE_ENV_PATH")
+    or (str(_HOME_ENV) if _HOME_ENV.exists() else str(_FALLBACK_ENV))
 )
 
-# プロジェクトルート: apps/api/src/config/settings.py から5階層上
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 _DEFAULT_DB_URL = f"sqlite:///{_PROJECT_ROOT.as_posix()}/data/assetbridge.db"
 
 

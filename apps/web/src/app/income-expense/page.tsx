@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { formatJpy } from "@/lib/format";
 import IncomeExpenseChart from "@/components/charts/IncomeExpenseChart";
 
 export default async function IncomeExpensePage() {
@@ -15,16 +16,16 @@ export default async function IncomeExpensePage() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 32 }}>
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>平均月収</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "#4ade80" }}>¥{data.avg_income_jpy.toLocaleString("ja-JP")}</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: "#4ade80" }}>{formatJpy(data.avg_income_jpy)}</div>
         </div>
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>平均月支出</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "#f87171" }}>¥{data.avg_expense_jpy.toLocaleString("ja-JP")}</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: "#f87171" }}>{formatJpy(data.avg_expense_jpy)}</div>
         </div>
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>平均純収支</div>
           <div style={{ fontSize: 24, fontWeight: 700, color: data.avg_net_jpy >= 0 ? "#4ade80" : "#f87171" }}>
-            ¥{data.avg_net_jpy.toLocaleString("ja-JP")}
+            {formatJpy(data.avg_net_jpy)}
           </div>
         </div>
       </div>
@@ -56,9 +57,9 @@ export default async function IncomeExpensePage() {
               return (
                 <tr key={cf.year_month} style={{ borderBottom: "1px solid #0f172a" }}>
                   <td style={{ padding: "10px 0" }}>{cf.year_month.slice(0, 4)}/{cf.year_month.slice(4)}</td>
-                  <td style={{ textAlign: "right", padding: "10px 0", color: "#4ade80" }}>+¥{cf.income_jpy.toLocaleString("ja-JP")}</td>
-                  <td style={{ textAlign: "right", padding: "10px 0", color: "#f87171" }}>-¥{cf.expense_jpy.toLocaleString("ja-JP")}</td>
-                  <td style={{ textAlign: "right", padding: "10px 0", color: c }}>¥{net.toLocaleString("ja-JP")}</td>
+                  <td style={{ textAlign: "right", padding: "10px 0", color: "#4ade80" }}>+{formatJpy(cf.income_jpy)}</td>
+                  <td style={{ textAlign: "right", padding: "10px 0", color: "#f87171" }}>-{formatJpy(cf.expense_jpy)}</td>
+                  <td style={{ textAlign: "right", padding: "10px 0", color: c }}>{formatJpy(net)}</td>
                 </tr>
               );
             })}

@@ -1,41 +1,27 @@
 import { api } from "@/lib/api";
+import { formatJpy, formatPct, diffColor } from "@/lib/format";
 import AssetHistoryChart from "@/components/charts/AssetHistoryChart";
+import AiCommentSection from "@/components/AiCommentSection";
 
 async function getData() {
   try {
-    const [summary, history, allocation, pnl, portfolioComment, pnlComment] = await Promise.all([
+    const [summary, history, allocation, pnl] = await Promise.all([
       api.portfolio.summary(),
       api.portfolio.history(30),
       api.insights.allocation(),
       api.insights.pnlRanking(5),
-      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/ai/comments/portfolio`, {
-        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" },
-        cache: "no-store",
-      }).then((r) => (r.ok ? r.json() : { comment: null })).catch(() => ({ comment: null })),
-      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/ai/comments/pnl`, {
-        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" },
-        cache: "no-store",
-      }).then((r) => (r.ok ? r.json() : { comment: null })).catch(() => ({ comment: null })),
     ]);
-    return {
-      summary,
-      history,
-      allocation,
-      pnl,
-      portfolioComment: (portfolioComment as { comment: string | null })?.comment ?? null,
-      pnlComment: (pnlComment as { comment: string | null })?.comment ?? null,
-    };
+    return { summary, history, allocation, pnl };
   } catch {
-    return { summary: null, history: null, allocation: null, pnl: null, portfolioComment: null, pnlComment: null };
+    return { summary: null, history: null, allocation: null, pnl: null };
   }
 }
 
 export default async function DashboardPage() {
-  const { summary, history, pnl, portfolioComment, pnlComment } = await getData();
+  const { summary, history, pnl } = await getData();
   const diffJpy = summary?.prev_day_diff_jpy ?? 0;
   const diffPct = summary?.prev_day_diff_pct ?? 0;
   const sign = diffJpy >= 0 ? "+" : "";
-  const diffColor = diffJpy >= 0 ? "#4ade80" : "#f87171";
 
   return (
     <div>
@@ -46,10 +32,10 @@ export default async function DashboardPage() {
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>総資産</div>
           <div style={{ fontSize: 28, fontWeight: 700 }}>
-            ¥{(summary?.total_jpy ?? 0).toLocaleString("ja-JP")}
+            {formatJpy(summary?.total_jpy ?? 0)}
           </div>
-          <div style={{ fontSize: 14, color: diffColor, marginTop: 4 }}>
-            {sign}¥{Math.abs(diffJpy).toLocaleString("ja-JP")} ({sign}{diffPct.toFixed(2)}%)
+          <div style={{ fontSize: 14, color: diffColor(diffJpy), marginTop: 4 }}>
+            {sign}{formatJpy(Math.abs(diffJpy))} ({formatPct(diffPct)})
           </div>
         </div>
 
@@ -63,26 +49,21 @@ export default async function DashboardPage() {
         }).map(([name, value]) => (
           <div key={name} style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>{name}</div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>¥{(value as number).toLocaleString("ja-JP")}</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{formatJpy(value as number)}</div>
           </div>
         ))}
       </div>
 
       {/* 30日資産推移グラフ */}
-      {history?.history && history.history.length > 0 && (
+      {Array.isArray(history) && history.length > 0 && (
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>資産推移</h2>
-          <AssetHistoryChart data={history.history} />
+          <AssetHistoryChart data={history} />
         </div>
       )}
 
-      {/* AIコメント - ポートフォリオ総評 */}
-      {portfolioComment && (
-        <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24, borderLeft: "3px solid #60a5fa" }}>
-          <div style={{ fontSize: 12, color: "#60a5fa", marginBottom: 8 }}>AI コメント</div>
-          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#e2e8f0" }}>{portfolioComment}</p>
-        </div>
-      )}
+      {/* AIコメント（クライアント側でボタン生成） */}
+      <AiCommentSection />
 
       {/* 含み損益 TOP5 */}
       {pnl?.ranking && pnl.ranking.length > 0 && (
@@ -104,23 +85,15 @@ export default async function DashboardPage() {
                 return (
                   <tr key={item.asset_id} style={{ borderBottom: "1px solid #1e293b" }}>
                     <td style={{ padding: "10px 0" }}>{item.name}</td>
-                    <td style={{ textAlign: "right", padding: "10px 0" }}>¥{item.value_jpy.toLocaleString("ja-JP")}</td>
+                    <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(item.value_jpy)}</td>
                     <td style={{ textAlign: "right", padding: "10px 0", color: c }}>
-                      {s}¥{Math.abs(pnlJpy).toLocaleString("ja-JP")} ({s}{item.unrealized_pnl_pct.toFixed(1)}%)
+                      {s}{formatJpy(Math.abs(pnlJpy))} ({s}{item.unrealized_pnl_pct.toFixed(1)}%)
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {/* AIコメント - 含み損益評価 */}
-      {pnlComment && (
-        <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24, borderLeft: "3px solid #10b981" }}>
-          <div style={{ fontSize: 12, color: "#10b981", marginBottom: 8 }}>銘柄 AI コメント</div>
-          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#e2e8f0" }}>{pnlComment}</p>
         </div>
       )}
 
