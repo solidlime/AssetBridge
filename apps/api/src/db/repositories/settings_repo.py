@@ -33,3 +33,23 @@ class AppSettingsRepository:
     def set_system_prompt(self, prompt: str) -> None:
         """LLM のシステムプロンプトを保存する。"""
         self.set("system_prompt", prompt)
+
+    def get_scrape_schedule(self) -> dict:
+        """スクレイプスケジュール（時・分）を返す。DB 未設定の場合は毎日 6:00 JST をデフォルトとする。"""
+        return {
+            "hour": int(self.get("scrape_hour") or "6"),
+            "minute": int(self.get("scrape_minute") or "0"),
+        }
+
+    def set_scrape_schedule(self, hour: int, minute: int) -> None:
+        """スクレイプスケジュール（時・分）を保存する。"""
+        self.set("scrape_hour", str(hour))
+        self.set("scrape_minute", str(minute))
+
+    def get_ai_comment_ttl_hours(self) -> int:
+        """AI コメントキャッシュの TTL（時間）を返す。DB 未設定の場合は 6 を返す。"""
+        return int(self.get("ai_comment_ttl_hours") or "6")
+
+    def set_ai_comment_ttl_hours(self, hours: int) -> None:
+        """AI コメントキャッシュの TTL（時間）を保存する。"""
+        self.set("ai_comment_ttl_hours", str(hours))

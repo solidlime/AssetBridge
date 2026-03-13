@@ -57,6 +57,20 @@ export const api = {
         headers,
         body: JSON.stringify({ prompt }),
       }).then((r) => r.json()),
+    getScrapeSchedule: () => get<{ hour: number; minute: number }>("/settings/scrape-schedule"),
+    updateScrapeSchedule: (hour: number, minute: number) =>
+      fetch(`${API_URL}/api/settings/scrape-schedule`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ hour, minute }),
+      }).then((r) => r.json()),
+    getAiCommentTtl: () => get<{ hours: number }>("/settings/ai-comment-ttl"),
+    updateAiCommentTtl: (hours: number) =>
+      fetch(`${API_URL}/api/settings/ai-comment-ttl`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ hours }),
+      }).then((r) => r.json()),
   },
   aiComments: {
     portfolio: () => get<{ comment: string }>("/ai/comments/portfolio"),

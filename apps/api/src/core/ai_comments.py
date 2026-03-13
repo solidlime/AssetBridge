@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 from ..db.database import db_session
-from ..db.repositories import AppSettingsRepository, DailyTotalRepository, SnapshotRepository
+from ..db.repositories import AppSettingsRepository, DailyTotalRepository
 from .llm_client import chat
 
 logger = logging.getLogger(__name__)
@@ -9,7 +9,17 @@ logger = logging.getLogger(__name__)
 # コメントのメモリ内キャッシュ。スクレイプ完了後に clear_cache() で破棄する。
 # キー: キャッシュ識別子, 値: (コメント文字列, 有効期限 UTC datetime)
 _cache: dict[str, tuple[str, datetime]] = {}
-_CACHE_TTL = timedelta(hours=6)
+
+
+def _get_ttl() -> timedelta:
+    """DB の ai_comment_ttl_hours 設定（なければデフォルト 6h）を返す。"""
+    try:
+        with db_session() as db:
+            repo = AppSettingsRepository(db)
+            v = repo.get("ai_comment_ttl_hours")
+            return timedelta(hours=int(v)) if v and v.isdigit() else timedelta(hours=6)
+    except Exception:
+        return timedelta(hours=6)
 
 
 def _get_cached(key: str) -> str | None:
@@ -22,8 +32,8 @@ def _get_cached(key: str) -> str | None:
 
 
 def _set_cached(key: str, comment: str) -> None:
-    """コメントをキャッシュに格納する。有効期限は現在時刻 + _CACHE_TTL。"""
-    _cache[key] = (comment, datetime.utcnow() + _CACHE_TTL)
+    """コメントをキャッシュに格納する。有効期限は現在時刻 + DB 設定の TTL。"""
+    _cache[key] = (comment, datetime.utcnow() + _get_ttl())
 
 
 async def generate_portfolio_comment(system_prompt: str | None = None) -> str:
@@ -49,18 +59,19 @@ async def generate_portfolio_comment(system_prompt: str | None = None) -> str:
 
     latest = history[-1]
 
-    diff_jpy = latest.get("prev_day_diff_jpy", 0)
-    diff_pct = latest.get("prev_day_diff_pct", 0)
+    # DailyTotal は ORM オブジェクトなので getattr で属性アクセスする
+    diff_jpy = getattr(latest, "prev_day_diff_jpy", 0) or 0
+    diff_pct = getattr(latest, "prev_day_diff_pct", 0) or 0
     sign = "+" if diff_jpy >= 0 else ""
 
     context = f"""現在の資産状況:
-- 総資産: ¥{latest.get('total_jpy', 0):,.0f}
+- 総資産: ¥{getattr(latest, 'total_jpy', 0) or 0:,.0f}
 - 前日比: {sign}¥{diff_jpy:,.0f} ({sign}{diff_pct:.2f}%)
-- 日本株: ¥{latest.get('stock_jp_jpy', 0):,.0f}
-- 米国株: ¥{latest.get('stock_us_jpy', 0):,.0f}
-- 投資信託: ¥{latest.get('fund_jpy', 0):,.0f}
-- 現金・暗号資産: ¥{latest.get('cash_jpy', 0):,.0f}
-- 年金: ¥{latest.get('pension_jpy', 0):,.0f}
+- 日本株: ¥{getattr(latest, 'stock_jp_jpy', 0) or 0:,.0f}
+- 米国株: ¥{getattr(latest, 'stock_us_jpy', 0) or 0:,.0f}
+- 投資信託: ¥{getattr(latest, 'fund_jpy', 0) or 0:,.0f}
+- 現金・暗号資産: ¥{getattr(latest, 'cash_jpy', 0) or 0:,.0f}
+- 年金: ¥{getattr(latest, 'pension_jpy', 0) or 0:,.0f}
 """
 
     messages = [
@@ -80,7 +91,7 @@ async def generate_portfolio_comment(system_prompt: str | None = None) -> str:
 async def generate_pnl_comment(system_prompt: str | None = None) -> str:
     """含み損益上位5銘柄に対する AI コメントを生成する。
 
-    キャッシュヒット時はそのまま返す。ミス時は DB から PnL ランキングを取得して
+    キャッシュヒット時はそのまま返す。ミス時は PortfolioAnalyzer から PnL ランキングを取得して
     LLM にコメントを生成させ、キャッシュに格納してから返す。
     """
     cache_key = "pnl_comment"
@@ -89,10 +100,14 @@ async def generate_pnl_comment(system_prompt: str | None = None) -> str:
         return cached
 
     with db_session() as db:
-        snap_repo = SnapshotRepository(db)
         sp_repo = AppSettingsRepository(db)
         sp = system_prompt or sp_repo.get_system_prompt()
-        ranking = snap_repo.get_pnl_ranking(top=5)
+
+    # PortfolioAnalyzer は内部で db_session を開くので with ブロックの外で呼ぶ
+    from .analyzer import PortfolioAnalyzer
+    analyzer = PortfolioAnalyzer()
+    # get_unrealized_pnl_ranking は gainers + losers を返すため先頭5件が含み益上位
+    ranking = analyzer.get_unrealized_pnl_ranking(top=5)
 
     if not ranking:
         return "保有銘柄データがありません。"
