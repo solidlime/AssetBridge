@@ -49,6 +49,7 @@ class Settings(BaseSettings):
 
     # 外部データソース
     NEWS_API_KEY: str = ""
+    SEARXNG_URL: str = "http://nas:11111"
 
     # セキュリティ
     API_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
@@ -71,14 +72,29 @@ class Settings(BaseSettings):
     @field_validator("ENCRYPTION_KEY", mode="before")
     @classmethod
     def validate_encryption_key(cls, v: str) -> str:
-        """無効な値や空の場合は Fernet.generate_key() で自動生成する（警告なし）。"""
-        if not v:
-            return Fernet.generate_key().decode()
-        try:
-            Fernet(v.encode() if isinstance(v, str) else v)
-            return v
-        except Exception:
-            return Fernet.generate_key().decode()
+        """有効な Fernet キーならそのまま使用。無効/空の場合は data/.encryption_key を読み込むか
+        新規生成して同ファイルに保存することで、プロセス再起動後も同じキーを使い続ける。
+        .env への設定は不要（自動管理の方がセキュリティ上も安全）。"""
+        if v:
+            try:
+                Fernet(v.encode() if isinstance(v, str) else v)
+                return v
+            except Exception:
+                pass  # 無効値 → フォールバックへ
+
+        key_file = _PROJECT_ROOT / "data" / ".encryption_key"
+        if key_file.exists():
+            stored = key_file.read_text().strip()
+            try:
+                Fernet(stored.encode())
+                return stored
+            except Exception:
+                pass  # 壊れていたら再生成
+
+        key = Fernet.generate_key().decode()
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_text(key)
+        return key
 
     # サービス設定
     API_HOST: str = "0.0.0.0"

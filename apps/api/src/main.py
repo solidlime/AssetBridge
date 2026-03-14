@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .db.database import init_db
 from .scheduler.jobs import setup_scheduler
-from .routers import portfolio, assets, income_expense, insights, simulator, scrape, settings as settings_router, ai_comments, services as services_router
+from .routers import portfolio, assets, income_expense, insights, simulator, scrape, settings as settings_router, ai_comments, services as services_router, dividends as dividends_router
 
 
 @asynccontextmanager
@@ -44,6 +44,7 @@ app.include_router(scrape.router, prefix="/api")
 app.include_router(settings_router.router, prefix="/api")
 app.include_router(ai_comments.router, prefix="/api")
 app.include_router(services_router.router, prefix="/api")
+app.include_router(dividends_router.router, prefix="/api")
 
 
 @app.get("/health")

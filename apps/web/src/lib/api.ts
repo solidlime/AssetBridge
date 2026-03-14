@@ -76,5 +76,15 @@ export const api = {
     portfolio: () => get<{ comment: string }>("/ai/comments/portfolio"),
     pnl: () => get<{ comment: string }>("/ai/comments/pnl"),
     refresh: () => post<{ portfolio: string; pnl: string }>("/ai/comments/refresh"),
+    asset: (data: {
+      symbol: string;
+      name: string;
+      value_jpy: number;
+      unrealized_pnl_jpy: number;
+      unrealized_pnl_pct: number;
+    }) => post<{ comment: string }>("/ai/comments/asset", data),
+  },
+  dividends: {
+    summary: () => get<any>("/dividends/summary"),
   },
 };

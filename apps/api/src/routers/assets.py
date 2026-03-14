@@ -38,6 +38,7 @@ def get_assets(asset_type: Optional[str] = None, _: None = Depends(verify_api_ke
                 "price_jpy": snap.price_jpy if snap else 0,
                 "value_jpy": snap.value_jpy if snap else 0,
                 "cost_basis_jpy": snap.cost_basis_jpy if snap else 0,
+                "cost_per_unit_jpy": round((snap.cost_basis_jpy / snap.quantity), 0) if snap and snap.quantity and snap.quantity > 0 else 0,
                 "unrealized_pnl_jpy": snap.unrealized_pnl_jpy if snap else 0,
                 "unrealized_pnl_pct": snap.unrealized_pnl_pct if snap else 0,
             })

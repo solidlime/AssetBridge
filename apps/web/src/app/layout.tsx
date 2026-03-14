@@ -11,9 +11,11 @@ const navItems = [
   { href: "/assets", label: "資産", icon: "💼" },
   { href: "/income-expense", label: "収支", icon: "💰" },
   { href: "/insights", label: "インサイト", icon: "🔍" },
+  { href: "/dividends", label: "配当", icon: "💴" },
   { href: "/linked-services", label: "連携サービス", icon: "🔗" },
   { href: "/simulator", label: "シミュレーター", icon: "🎯" },
   { href: "/settings", label: "設定", icon: "⚙️" },
+  { href: "/logs", label: "ログ", icon: "📋" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
