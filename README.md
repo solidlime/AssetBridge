@@ -8,24 +8,28 @@
 - AI分析コメント生成（LLM選択可能）
 - MCP Server（Claude Codeから資産データ参照可能）
 - Discord Bot（毎朝自動レポート）
+- リスク分析・配当カレンダー・Monteカルロシミュレータ
 
 ## 技術スタック
 
 | 領域 | 技術 |
 |------|------|
-| **バックエンド** | Python 3.11+ / FastAPI / SQLAlchemy / SQLite |
-| **フロントエンド** | Next.js 15 / React 19 / TypeScript / Recharts / Tailwind CSS |
-| **スクレイパー** | Playwright (Chromium) / playwright-stealth |
-| **AI分析** | LiteLLM（Anthropic/OpenAI/Gemini/OpenRouter対応） |
-| **Bot / MCP** | discord.py / FastMCP |
-| **モノレポ** | pnpm workspace / Turborepo |
+| **Runtime** | Bun 1.1+ |
+| **API** | Hono.js + tRPC v11 |
+| **ORM** | Drizzle ORM + bun:sqlite |
+| **スクレイパー** | Playwright + TypeScript |
+| **MCP Server** | @modelcontextprotocol/sdk (stdio) |
+| **Discord Bot** | discord.js + node-cron |
+| **フロントエンド** | Next.js 15 + shadcn/ui + tRPC client |
+| **プロセス管理** | PM2 |
+| **モノレポ** | pnpm workspace + Turborepo |
 
 ## 必要要件
 
-- **Python**: 3.11 以上
-- **Node.js**: 20 以上（Web UI を使う場合）
-- **pnpm**: 9.0 以上（Web UI を使う場合）
+- **Bun**: 1.1 以上
+- **pnpm**: 9.0 以上
 - **OS**: Windows / macOS / Linux
+- **Node.js**: Bun が内包（不要）
 
 ## クイックスタート
 
@@ -36,96 +40,91 @@ git clone https://github.com/solidlime/AssetBridge.git
 cd AssetBridge
 ```
 
-### 2. セットアップスクリプトを実行
+### 2. 依存関係をインストール
 
-**Windows (Git Bash 推奨)**
 ```bash
-bash scripts/setup.sh
+pnpm install
 ```
 
-**Windows (PowerShell)**
-```powershell
-.\scripts\setup.ps1
-```
+### 3. 環境変数を設定
 
-**Linux / macOS**
 ```bash
-bash scripts/setup_linux.sh
+bun scripts/setup_secrets.ts
 ```
 
-セットアップ中、以下を自動実行します：
-- Python 仮想環境構築
-- 依存パッケージのインストール
-- Playwright Chromium インストール
-- 環境変数ファイル（`~/.assetbridge/.env`）の作成
-- SQLite データベース初期化
-- FastAPI と Next.js の起動
-
-### 3. ブラウザで開く
-
-セットアップ完了後、自動的に起動します：
-- **Web Dashboard**: http://localhost:3000
-- **API Swagger Docs**: http://localhost:8000/docs
-
-## 環境設定
-
-設定は `~/.assetbridge/.env` に保存されます（プロジェクト外に隔離）。
-
-### 必須項目
+テンプレートが `~/.assetbridge/.env` に作成されます。以下を編集：
 
 ```env
+# 必須
 MF_EMAIL=your@email.com
 MF_PASSWORD=your_password
-```
+API_KEY=auto_generated_key
 
-### オプション項目
-
-```env
-# AI コメント生成（下記のうち1つ以上設定）
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=...
-OPENROUTER_API_KEY=sk-or-...
-
-# Discord Bot（Discord レポート+設定リモート操作）
+# オプション
 DISCORD_TOKEN=...
 DISCORD_CHANNEL_ID=123456789
-
-# 外部データ（オプション）
-NEWS_API_KEY=...
-
-# MF 2FA（メール認証を使う場合は不要）
-MF_TOTP_SEED=...  # TOTP シード（Base32）
-
-# システム設定
-DATABASE_URL=sqlite:////path/to/assetbridge.db  # デフォルト: ./data/assetbridge.db
-API_PORT=8000
-WEB_PORT=3000
-MCP_PORT=8001
+SEARXNG_URL=http://localhost:8888  # ニュース取得用
 ```
 
-環境変数を後から更新する場合は、以下を再実行（依存関係は自動検出でスキップされる）：
+### 4. DB マイグレーション
+
 ```bash
-bash scripts/setup.sh
+bun scripts/migrate.ts
 ```
 
-## セットアップオプション
+初回時のみ実行。`data/assetbridge_v2.db` が作成されます（bun:sqlite WAL モード）。
+
+### 5. 全サービス起動
 
 ```bash
-# セットアップのみ（サーバーを起動しない）
-bash scripts/setup.sh --no-start
+pm2 start ecosystem.config.ts
+pm2 status
+```
 
-# 依存関係を強制再インストール（通常は自動検出で不要）
-bash scripts/setup.sh --install-deps
+起動後、自動的に以下が実行されます：
+- **Web Dashboard**: http://localhost:3000
+- **API**: http://localhost:8000
+- **MCP Server**: stdio 接続
+- **Crawler**: スケジュール実行
+- **Discord Bot**: 自動レポート（DISCORD_TOKEN設定時）
 
-# MCP Server も起動
-bash scripts/setup.sh --with-mcp
+## サービス管理
 
-# Discord Bot も起動（DISCORD_TOKEN 設定済みの場合）
-bash scripts/setup.sh --with-discord
+### 起動
 
-# セットアップ後にスクレイパーを自動実行
-bash scripts/setup.sh --auto-scrape
+```bash
+# 全サービス起動
+pm2 start ecosystem.config.ts
+
+# 個別起動
+pm2 start "api"
+pm2 start "web"
+pm2 start "crawler"
+pm2 start "discord-bot"
+pm2 start "mcp"
+```
+
+### 停止
+
+```bash
+bash scripts/stop.sh
+# または
+pm2 stop all
+```
+
+### ステータス確認
+
+```bash
+pm2 status
+pm2 logs
+```
+
+### ログ確認
+
+```bash
+pm2 logs api
+pm2 logs web
+pm2 logs crawler
 ```
 
 ## 使い方
@@ -137,78 +136,124 @@ http://localhost:3000 から以下を操作できます：
 | ページ | 機能 |
 |--------|------|
 | **ダッシュボード** | 総資産・推移グラフ・資産構成・AI分析コメント |
-| **保有資産** | 株式・投信・現金等の詳細一覧（評価額・損益・銘柄） |
+| **保有資産** | 株式・投信・現金等の詳細一覧（評価額・損益） |
 | **収支** | 収入・支出の月別推移 |
-| **insights** | 市況ニュース・リスク分析 |
-| **シミュレータ** | Monte Carlo シミュレーション（リスク・リターン評価） |
-| **サービス設定** | スクレイパースケジュール・LLM設定・Discord設定 |
+| **市況** | ニュース・リスク分析 |
+| **配当** | 配当カレンダー・月別推定額 |
+| **シミュレータ** | Monteカルロシミュレーション（リスク・リターン評価） |
+| **設定** | スクレイプスケジュール・LLM設定・Discord設定 |
 
-### API エンドポイント
+### tRPC API エンドポイント
 
-全エンドポイントは **`X-API-Key` ヘッダー認証** が必須です。API_KEY は setup.sh で自動生成され、Web UI の環境変数に表示されます。
+全エンドポイントは **`X-API-Key` ヘッダー認証** が必須です。
 
 #### ポートフォリオ
 
-**GET `/api/portfolio/summary`** — 総資産・カテゴリ別構成
 ```bash
-curl -H "X-API-Key: {API_KEY}" http://localhost:8000/api/portfolio/summary
+# 現在のスナップショット
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/portfolio.snapshot
+
+# 資産推移（過去 N 日間）
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/portfolio.history
+
+# 保有銘柄一覧
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/portfolio.holdings
+
+# 銘柄詳細
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/portfolio.assetDetail?id=asset123
 ```
 
-**GET `/api/portfolio/history`** — 資産推移（過去 N 日間）
+#### 分析
+
 ```bash
-curl -H "X-API-Key: {API_KEY}" "http://localhost:8000/api/portfolio/history?days=30"
+# 期間分析（7日/30日/1年）
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/analysis.period
+
+# リスク指標（Sharpe/Sortino/MaxDD）
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/analysis.risk
+
+# シナリオシミュレーション
+curl -X POST -H "X-API-Key: {API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"annual_return":0.05,"volatility":0.1,"years":10}' \
+  http://localhost:8000/trpc/analysis.scenario
 ```
 
-#### スクレイパー
-
-**POST `/api/scrape/trigger`** — スクレイピング開始（一括更新）
-```bash
-curl -X POST -H "X-API-Key: {API_KEY}" http://localhost:8000/api/scrape/trigger
-```
-*完全なデータ取得には 30 分待機します（MoneyForward 仕様）*
-
-**GET `/api/scrape/status`** — スクレイプ実行状態・ログ確認
-```bash
-curl -H "X-API-Key: {API_KEY}" http://localhost:8000/api/scrape/status
-```
-
-#### AI コメント
-
-**GET `/api/ai/comments/portfolio`** — ポートフォリオ分析コメント（TTL: 6時間キャッシュ）
-
-**POST `/api/ai/comments/refresh`** — キャッシュをクリアして再生成
-
-#### その他
-
-**GET `/api/assets`** — 保有銘柄詳細
-**GET `/api/income-expense`** — 収支集計
-**GET `/api/insights`** — 市況ニュース
-**POST `/api/simulator/calculate`** — リスク評価
-
-Swagger UI で全エンドポイント確認可能: http://localhost:8000/docs
-
-### 手動スクレイピング
+#### 市況・配当
 
 ```bash
-# 仮想環境有効化
-source .venv/Scripts/activate  # Windows Git Bash
-source .venv/bin/activate      # macOS / Linux
+# 市況コンテキスト（日経/S&P500/TOPIX）
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/market.context
 
-# スクレイパー実行
-python -m apps.crawler.src.scrapers.mf_sbi_bank
+# ニュース検索
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/market.news?query=配当
+
+# 配当カレンダー
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/dividends.calendar
 ```
 
-### CLI ツール
+#### スクレイパー・シミュレータ
 
 ```bash
-# スケジューラー確認
-python scripts/check_scheduler.py
+# スクレイピング開始（一括更新）
+curl -X POST -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/scrape.trigger
 
-# DB バックアップ
-python scripts/backup_db.py
+# スクレイプ状態確認
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/scrape.status
 
-# 環境変数テンプレート再作成
-python scripts/setup_secrets.py
+# Monteカルロ実行
+curl -X POST -H "X-API-Key: {API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"iterations":10000}' \
+  http://localhost:8000/trpc/simulator.run
+```
+
+#### 設定
+
+```bash
+# システムプロンプト取得
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/settings.systemPrompt
+
+# スクレイプスケジュール取得
+curl -H "X-API-Key: {API_KEY}" http://localhost:8000/trpc/settings.scrapeSchedule
+```
+
+### Claude Code MCP ツール
+
+Claude Code から以下のツールを使用可能です（.claude/skills にスキルファイル有）：
+
+**ポートフォリオ取得**
+- `get_portfolio_snapshot` — 現在のスナップショット
+- `get_holdings` — 保有銘柄一覧
+- `get_asset_history` — 銘柄の価格推移
+- `get_asset_detail` — 銘柄の詳細情報
+
+**分析**
+- `analyze_period` — 期間分析
+- `run_scenario` — シナリオシミュレーション
+- `get_risk_metrics` — リスク指標
+
+**市況・配当**
+- `get_market_context` — 市況コンテキスト
+- `search_news` — ニュース検索
+- `get_dividend_calendar` — 配当カレンダー
+
+**その他**
+- `trigger_scrape` — スクレイピング開始
+- `get_scrape_status` — スクレイプ状態確認
+- `run_monte_carlo` — Monteカルロシミュレーション実行
+- `set_mf_2fa_code` — MF 2FA コード設定
+
+### Claude Code スキル
+
+`.claude/skills/` に事前定義済みスキル：
+
+```bash
+/portfolio-review       # ポートフォリオレビュー
+/risk-assessment        # リスク分析
+/tax-analysis           # 税務分析
+/dividend-analysis      # 配当分析
+/rebalance              # リバランス提案
 ```
 
 ## ディレクトリ構成
@@ -216,76 +261,82 @@ python scripts/setup_secrets.py
 ```
 AssetBridge/
 ├── apps/
-│   ├── api/                    # FastAPI バックエンド
+│   ├── api/                    # Hono.js + tRPC API (port 8000)
 │   │   ├── src/
-│   │   │   ├── main.py         # メインアプリケーション
-│   │   │   ├── routers/        # API エンドポイント
-│   │   │   ├── core/           # 分析ロジック
-│   │   │   ├── db/             # SQLAlchemy ORM
-│   │   │   └── config/         # 設定ファイル
-│   │   └── pyproject.toml      # 依存関係定義
-│   │
-│   ├── web/                    # Next.js ダッシュボード
-│   │   ├── src/
-│   │   │   ├── app/            # ページ
-│   │   │   └── components/     # UI コンポーネント
+│   │   │   ├── index.ts        # Hono + tRPC ルーター
+│   │   │   ├── routes/         # tRPC ルーターの個別ファイル
+│   │   │   ├── lib/            # ユーティリティ関数
+│   │   │   └── middleware/     # 認証・エラーハンドリング
 │   │   └── package.json
 │   │
 │   ├── crawler/                # Playwright スクレイパー
-│   │   └── src/
-│   │       └── scrapers/
-│   │           └── mf_sbi_bank.py
+│   │   ├── src/
+│   │   │   ├── scrapers/
+│   │   │   │   └── mf_sbi_bank.ts
+│   │   │   ├── job-queue.ts    # スクレイプジョブ管理
+│   │   │   └── session-manager.ts
+│   │   └── package.json
 │   │
-│   ├── mcp/                    # FastMCP サーバー（Claude Code 連携）
-│   │   └── src/
-│   │       └── server.py
+│   ├── mcp/                    # MCP サーバー (stdio)
+│   │   ├── src/
+│   │   │   └── index.ts        # MCP tool 定義
+│   │   └── package.json
 │   │
-│   └── discord-bot/            # Discord Bot
-│       └── src/
-│           └── bot.py
+│   ├── discord-bot/            # Discord Bot
+│   │   ├── src/
+│   │   │   └── index.ts        # Bot エントリーポイント
+│   │   └── package.json
+│   │
+│   └── web/                    # Next.js 15 ダッシュボード (port 3000)
+│       ├── src/
+│       │   ├── app/            # ページ
+│       │   ├── components/     # UI コンポーネント
+│       │   └── lib/            # クライアント側ユーティリティ
+│       └── package.json
+│
+├── packages/
+│   ├── db/                     # Drizzle スキーマ + bun:sqlite
+│   │   ├── schema.ts           # テーブル定義
+│   │   └── index.ts            # DB インスタンス
+│   │
+│   └── types/                  # 共有型定義
+│       └── index.ts
 │
 ├── scripts/
-│   ├── setup.sh                # メインセットアップ (Windows/Git Bash)
-│   ├── setup.ps1               # Windows PowerShell 版
-│   ├── setup_linux.sh          # Linux/macOS 版
-│   ├── setup_db.py             # DB 初期化
-│   ├── setup_secrets.py        # .env テンプレート作成
-│   ├── run_dev.sh              # サーバー起動のみ
-│   └── backup_db.py            # DB バックアップ
+│   ├── migrate.ts              # DB マイグレーション
+│   └── stop.sh                 # PM2 停止スクリプト
 │
 ├── data/
-│   └── assetbridge.db          # SQLite データベース (Git 管理外)
+│   └── assetbridge_v2.db       # SQLite (WAL モード、Git 管理外)
 │
-├── .env.example                # 環境変数テンプレート
-├── requirements.txt            # Python 依存関係
-├── package.json                # Monorepo 設定
-├── pnpm-workspace.yaml         # pnpm ワークスペース
+├── .claude/
+│   └── skills/                 # Claude Code スキルファイル (5個)
+│
+├── ecosystem.config.ts         # PM2 全サービス定義
+├── drizzle.config.ts           # Drizzle 設定
+├── package.json                # pnpm workspace root
+├── pnpm-workspace.yaml
 └── turbo.json                  # Turborepo パイプライン
 
 # 環境変数ファイル（プロジェクト外）
 ~/.assetbridge/.env            # 認証情報・APIキー
 ```
 
+## MoneyForward ログインフロー
+
+- **URL**: https://ssnb.x.moneyforward.com
+- **2FA**: メール認証（TOTP 非対応）
+  - Claude Code の `set_mf_2fa_code` ツールでコード入力
+  - または環境変数 `MF_2FA_CODE=123456` で自動入力
+- **セッション**: 自動的に `crawler_sessions` テーブルに永続化
+
 ## トラブルシューティング
-
-### Python 3.11 が見つからない
-
-```bash
-# バージョン確認
-python --version
-python3 --version
-python3.12 --version
-
-# 手動指定でセットアップ
-PYTHON_CMD=python3.12 bash scripts/setup.sh
-```
 
 ### ポート競合エラー
 
-既存のプロセスを確認して停止：
 ```bash
 # Windows (Git Bash)
-netstat -ano | grep 3000
+netstat -ano | grep :3000
 taskkill /PID <PID> /F
 
 # macOS / Linux
@@ -293,44 +344,43 @@ lsof -i :3000
 kill -9 <PID>
 ```
 
-または異なるポートで起動：
-```bash
-WEB_PORT=3001 API_PORT=8001 bash scripts/setup.sh
-```
-
 ### Playwright インストール失敗
 
 ```bash
-source .venv/Scripts/activate  # または .venv/bin/activate
-playwright install chromium --with-deps
+# Bun 組み込みの Playwright がある場合は不要
+# 念のため再インストール
+bun add --save playwright
+bunx playwright install chromium
 ```
 
 ### MoneyForward ログイン失敗
 
 **よくある原因**
 - MF_EMAIL / MF_PASSWORD が間違っている
-- MF にログインできない IP／デバイスから実行している
-- 2FA 有効化後、MF_TOTP_SEED が設定されていない
+- 2FA コードが期限切れ
+- IP が制限されている
 
 **解決方法**
 ```bash
 # 環境変数を再設定
 nano ~/.assetbridge/.env
 
-# キャッシュクリア＆リトライ
-rm -rf .venv/lib/python*/site-packages/playwright/
-bash scripts/setup.sh --no-start
+# セッションキャッシュをクリア
+rm data/assetbridge_v2.db
+bun scripts/migrate.ts
+
+# スクレイパーを手動実行してログ確認
+pm2 logs crawler
 ```
 
 ### API が起動しない
 
 ```bash
-# ログを確認
-cd apps/api
-PYTHONPATH=../.. python -m uvicorn src.main:app --reload
+# ログ確認
+pm2 logs api
 
-# DB が壊れていないか確認
-python scripts/setup_db.py
+# 個別起動でエラー出力
+bun apps/api/src/index.ts
 ```
 
 ### Web UI が白画面のまま
@@ -340,30 +390,63 @@ python scripts/setup_db.py
    ```bash
    grep API_KEY ~/.assetbridge/.env
    ```
-3. `.env.local` を削除して再起動：
+3. トRPC クライアント設定を確認：
    ```bash
-   rm apps/web/.env.local
-   bash scripts/run_dev.sh
+   grep -r "apiUrl" apps/web/src/
    ```
 
 ## セキュリティ
 
 - **環境変数の隔離**: `~/.assetbridge/.env` はプロジェクト外に保存（API キー漏洩防止）
 - **API 認証**: 全エンドポイントは `X-API-Key` ヘッダー認証が必須
-- **暗号化**: セッションファイルは Fernet で暗号化
 - **CORS**: localhost のみ許可（開発環境）
 
 本番環境で使用する場合：
 - HTTPS を有効化
 - API_KEY を強力なランダム値に変更
 - CORS origins を制限
-- MF_PASSWORD を安全に管理（キーチェーン等）
+- MF_PASSWORD をキーチェーン等で管理
 
 ## スケジューリング
 
 スクレイパーは **毎日 10:00** に自動実行されます（設定は Web UI から変更可能）。
 
-MoneyForward の API 仕様により、データ取得には最大 30 分の待機が必要です。
+MoneyForward のバッチ更新により、データ取得には最大 30 分の待機が必要です。
+
+## 開発
+
+### 開発用起動（hot reload）
+
+```bash
+# API
+bun --watch apps/api/src/index.ts
+
+# Web
+cd apps/web
+bun dev
+
+# Crawler
+bun --watch apps/crawler/src/index.ts
+```
+
+### DB マイグレーション（スキーマ変更後）
+
+```bash
+bun scripts/migrate.ts
+```
+
+### 型生成（tRPC）
+
+```bash
+bun generate-types
+```
+
+### linting / formatting
+
+```bash
+pnpm lint
+pnpm format
+```
 
 ## ライセンス
 
@@ -376,11 +459,10 @@ MIT
 1. https://github.com/solidlime/AssetBridge/issues で既知の問題を確認
 2. ログを確認：
    ```bash
-   cd apps/api
-   python -m uvicorn src.main:app --reload
+   pm2 logs
    ```
-3. Issue を作成してください（ログ・環境情報を含める）
+3. Issue を作成（ログ・環境情報を含める）
 
 ---
 
-**最終更新**: 2026-03-13
+**最終更新**: 2026-03-15
