@@ -2,7 +2,8 @@ import type { SimulatorInput, SimulatorResult } from "@assetbridge/types";
 
 // Box-Muller 変換で標準正規乱数を生成
 function boxMullerRandom(): number {
-  const u1 = Math.random();
+  // Math.random() が 0 を返した場合 log(0) = -Infinity になるため EPSILON で保護
+  const u1 = Math.random() || Number.EPSILON;
   const u2 = Math.random();
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 }

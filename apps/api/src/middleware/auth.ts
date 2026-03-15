@@ -4,14 +4,15 @@ const API_KEY = process.env.API_KEY ?? "";
 
 export const authMiddleware: MiddlewareHandler = async (c, next) => {
   const key = c.req.header("X-API-Key");
-  // If no API_KEY configured, allow all (dev mode)
-  if (API_KEY && key !== API_KEY) {
+  // API_KEY未設定時は認証失敗にする（dev modeでも認証をバイパスしない）
+  if (!isValidApiKey(key)) {
     return c.json({ error: "Unauthorized" }, 401);
   }
   await next();
 };
 
 export function isValidApiKey(key: string | undefined): boolean {
-  if (!API_KEY) return true; // dev mode: no key required
+  // API_KEY未設定時は認証失敗にする（dev modeでも認証をバイパスしない）
+  if (!API_KEY) return false;
   return key === API_KEY;
 }

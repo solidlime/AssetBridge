@@ -58,7 +58,24 @@ async function loadSession(contextArg: BrowserContext): Promise<boolean> {
     .where(eq(crawlerSessions.name, "mf_sbi_bank"))
     .get();
   if (!row) return false;
-  const cookies = JSON.parse(row.cookiesJson) as Parameters<BrowserContext["addCookies"]>[0];
+
+  // JSON.parse 後に型ガードを挟み、不正なフォーマットで addCookies がクラッシュするのを防ぐ
+  const parsed = JSON.parse(row.cookiesJson);
+  if (!Array.isArray(parsed)) {
+    console.error("[crawler] Invalid cookie format in DB, skipping session restore");
+    return false;
+  }
+  const cookies = parsed.filter((c: unknown) =>
+    c !== null &&
+    typeof c === "object" &&
+    "name" in (c as Record<string, unknown>) &&
+    "value" in (c as Record<string, unknown>)
+  ) as Parameters<BrowserContext["addCookies"]>[0];
+  if (cookies.length === 0) {
+    console.error("[crawler] No valid cookies found, skipping session restore");
+    return false;
+  }
+
   await contextArg.addCookies(cookies);
   return true;
 }
@@ -80,7 +97,8 @@ async function get2faCode(timeoutMs = 300_000): Promise<string | null> {
         .run();
       return row.value;
     }
-    await new Promise<void>((r) => setTimeout(r, 3_000));
+    // 2FAコードはメール到着に時間がかかるため 10秒間隔でポーリングする
+    await new Promise<void>((r) => setTimeout(r, 10_000));
   }
   return null;
 }

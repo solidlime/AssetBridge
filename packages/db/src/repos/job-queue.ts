@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Db } from "../client";
 import { jobQueue } from "../schema/index";
 
@@ -14,10 +14,11 @@ export class JobQueueRepo {
   }
 
   getLatest(): (typeof jobQueue.$inferSelect) | undefined {
+    // 全件取得後の .at(-1) は N行分のメモリを無駄にする。DB側で1件に絞る。
     return this.db.select().from(jobQueue)
-      .orderBy(jobQueue.id)
-      .all()
-      .at(-1);
+      .orderBy(desc(jobQueue.id))
+      .limit(1)
+      .get() ?? undefined;
   }
 
   updateStatus(id: number, status: string, extra?: { result?: string; error?: string }): void {

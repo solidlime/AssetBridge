@@ -33,7 +33,7 @@ server.tool(
   async ({ code }) => {
     try {
       await trpc.settings.setMf2faCode.mutate({ code });
-      return { content: [{ type: "text", text: `2FA code set: ${code}` }] };
+      return { content: [{ type: "text", text: "2FA code accepted" }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
     }

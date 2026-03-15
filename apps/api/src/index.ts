@@ -8,10 +8,19 @@ import type { Context } from "./trpc";
 
 const app = new Hono();
 
+if (!process.env.API_KEY) {
+  console.warn("[api] WARNING: API_KEY not set — all API requests will be rejected");
+}
+
+const origin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
+if (origin === "*") {
+  console.warn("[api] WARNING: WEB_ORIGIN=* — all origins allowed, not recommended for production");
+}
+
 app.use(
   "*",
   cors({
-    origin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
+    origin,
     allowHeaders: ["X-API-Key", "Content-Type"],
   })
 );

@@ -59,9 +59,14 @@ export async function searchNews(params: {
   const searxngUrl =
     settingsRepo.get("searxng_url") ?? process.env.SEARXNG_URL ?? "http://localhost:8080";
 
+  // symbols の各要素を安全化（パストラバーサル・インジェクション対策）
+  const safeSymbols = (params.symbols ?? [])
+    .map(s => s.slice(0, 20).replace(/[^A-Za-z0-9.\-\^=]/g, ""))
+    .filter(s => s.length > 0);
+
   let query = params.query ?? "";
-  if (params.symbols?.length) {
-    query = params.symbols.join(" OR ") + (query ? ` ${query}` : "");
+  if (safeSymbols.length) {
+    query = safeSymbols.join(" OR ") + (query ? ` ${query}` : "");
   }
   if (!query) query = "日本株 市場";
 
