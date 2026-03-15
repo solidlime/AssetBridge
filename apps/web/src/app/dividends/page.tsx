@@ -1,19 +1,19 @@
-import { api } from "@/lib/api";
+import { trpc } from "@/lib/trpc";
 import { formatJpy } from "@/lib/format";
 
-type DividendSummary = {
-  total_annual_est_jpy: number;
-  portfolio_yield_pct: number;
-  monthly_breakdown: number[];
+type DividendCalendar = {
+  totalAnnualEstJpy: number;
+  portfolioYieldPct: number;
+  monthlyBreakdown: number[];
   holdings: Array<{
     symbol: string;
     name: string;
-    asset_type: string;
-    value_jpy: number;
-    dividend_yield_pct: number;
-    annual_est_jpy: number;
-    monthly_est_jpy: number[];
-    ex_dividend_date: string | null;
+    assetType: string;
+    valueJpy: number;
+    dividendYieldPct: number;
+    annualEstJpy: number;
+    monthlyEstJpy: number[];
+    exDividendDate: string | null;
   }>;
 };
 
@@ -23,11 +23,11 @@ const MONTH_LABELS = [
 ];
 
 export default async function DividendsPage() {
-  let summary: DividendSummary | null = null;
+  let calendar: DividendCalendar | null = null;
   let error: string | null = null;
 
   try {
-    summary = await api.dividends.summary();
+    calendar = await trpc.dividends.calendar.query() as DividendCalendar;
   } catch (e) {
     error = e instanceof Error ? e.message : "データの取得に失敗しました";
   }
@@ -41,7 +41,7 @@ export default async function DividendsPage() {
     );
   }
 
-  if (!summary) {
+  if (!calendar) {
     return (
       <div>
         <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>配当・分配金</h1>
@@ -50,7 +50,7 @@ export default async function DividendsPage() {
     );
   }
 
-  const maxMonthly = Math.max(...summary.monthly_breakdown, 1);
+  const maxMonthly = Math.max(...calendar.monthlyBreakdown, 1);
 
   return (
     <div>
@@ -60,12 +60,12 @@ export default async function DividendsPage() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 20 }}>
           <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>年間予想配当合計</div>
-          <div style={{ fontSize: 28, fontWeight: 700 }}>{formatJpy(summary.total_annual_est_jpy)}</div>
+          <div style={{ fontSize: 28, fontWeight: 700 }}>{formatJpy(calendar.totalAnnualEstJpy)}</div>
         </div>
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 20 }}>
           <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>ポートフォリオ利回り</div>
           <div style={{ fontSize: 28, fontWeight: 700, color: "#34d399" }}>
-            {summary.portfolio_yield_pct.toFixed(2)}%
+            {calendar.portfolioYieldPct.toFixed(2)}%
           </div>
         </div>
       </div>
@@ -74,7 +74,7 @@ export default async function DividendsPage() {
       <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
         <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20, color: "#e2e8f0" }}>月別予想配当額</h2>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 160 }}>
-          {summary.monthly_breakdown.map((amount, i) => {
+          {calendar.monthlyBreakdown.map((amount, i) => {
             const heightPct = maxMonthly > 0 ? (amount / maxMonthly) * 100 : 0;
             return (
               <div
@@ -104,7 +104,7 @@ export default async function DividendsPage() {
       {/* 銘柄別テーブル */}
       <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, overflowX: "auto" }}>
         <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, color: "#e2e8f0" }}>銘柄別配当予想</h2>
-        {summary.holdings.length === 0 ? (
+        {calendar.holdings.length === 0 ? (
           <p style={{ color: "#94a3b8" }}>配当データのある銘柄がありません</p>
         ) : (
           <table
@@ -121,19 +121,19 @@ export default async function DividendsPage() {
               </tr>
             </thead>
             <tbody>
-              {summary.holdings.map((h) => (
+              {calendar.holdings.map((h) => (
                 <tr key={h.symbol} style={{ borderBottom: "1px solid #0f172a" }}>
                   <td style={{ padding: "10px 0" }}>
                     <div style={{ fontWeight: 600 }}>{h.symbol}</div>
                     <div style={{ fontSize: 12, color: "#94a3b8" }}>{h.name}</div>
                   </td>
-                  <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(h.value_jpy)}</td>
+                  <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(h.valueJpy)}</td>
                   <td style={{ textAlign: "right", padding: "10px 0", color: "#34d399" }}>
-                    {h.dividend_yield_pct.toFixed(2)}%
+                    {h.dividendYieldPct.toFixed(2)}%
                   </td>
-                  <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(h.annual_est_jpy)}</td>
+                  <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(h.annualEstJpy)}</td>
                   <td style={{ textAlign: "right", padding: "10px 0", color: "#94a3b8" }}>
-                    {h.ex_dividend_date ?? "—"}
+                    {h.exDividendDate ?? "—"}
                   </td>
                 </tr>
               ))}

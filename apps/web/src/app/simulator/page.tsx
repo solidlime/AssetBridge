@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { api } from "@/lib/api";
+import { trpc } from "@/lib/trpc";
 import SimulatorChart from "@/components/charts/SimulatorChart";
 
 export default function SimulatorPage() {
@@ -29,7 +29,7 @@ export default function SimulatorPage() {
   const run = async () => {
     setLoading(true);
     try {
-      const res = await api.simulator.run(params);
+      const res = await trpc.simulator.run.mutate(params);
       setResult(res);
     } catch (e) {
       console.warn("シミュレーション実行エラー:", e);

@@ -67,7 +67,13 @@
       "Bash(ls:*)",
       "Bash(bun:*)",
       "Bash(node:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(cd /d/VSCode/AssetBridge/packages/types && npm run type-check 2>&1)",
+      "Bash(pm2:*)",
+      "Bash(cd D:/VSCode/AssetBridge && pnpm install 2>&1)",
+      "Bash(cd D:/VSCode/AssetBridge && pnpm exec drizzle-kit generate --config drizzle.config.ts 2>&1)",
+      "Bash(cd D:/VSCode/AssetBridge && mv data/assetbridge.db data/assetbridge_v1_backup.db && echo \"backed up v1 DB\" && bun scripts/migrate.ts 2>&1)",
+      "Bash(cmd.exe:*)"
     ]
   }
 }

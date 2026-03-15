@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
-const HEADERS: Record<string, string> = { "X-API-Key": API_KEY };
+import { trpc } from "@/lib/trpc";
 
 type ScrapeStatus = {
   status: "success" | "failed" | "running" | null;
@@ -13,14 +10,8 @@ type ScrapeStatus = {
   records_saved: number | null;
 };
 
-type ServiceStatus = {
-  running: boolean;
-};
-
 type StatusState = {
   mf: ScrapeStatus | null;
-  discord: ServiceStatus | null;
-  mcp: ServiceStatus | null;
   loading: boolean;
   error: string | null;
 };
@@ -153,40 +144,16 @@ function getMfBadgeStatus(mf: ScrapeStatus | null): BadgeStatus {
 export default function LinkedServicesPage() {
   const [state, setState] = useState<StatusState>({
     mf: null,
-    discord: null,
-    mcp: null,
     loading: true,
     error: null,
   });
+  const [triggering, setTriggering] = useState(false);
+  const [triggerMessage, setTriggerMessage] = useState<string | null>(null);
 
   const fetchStatuses = useCallback(async () => {
     try {
-      const [scrapeRes, discordRes, mcpRes] = await Promise.all([
-        fetch(`${API_URL}/api/scrape/status`, { headers: HEADERS }),
-        fetch(`${API_URL}/api/services/discord/status`, { headers: HEADERS }),
-        fetch(`${API_URL}/api/services/mcp/status`, { headers: HEADERS }),
-      ]);
-
-      if (!scrapeRes.ok) {
-        console.warn("scrape/status fetch failed:", scrapeRes.status);
-        return;
-      }
-      if (!discordRes.ok) {
-        console.warn("discord/status fetch failed:", discordRes.status);
-        return;
-      }
-      if (!mcpRes.ok) {
-        console.warn("mcp/status fetch failed:", mcpRes.status);
-        return;
-      }
-
-      const [scrapeData, discordData, mcpData] = await Promise.all([
-        scrapeRes.json(),
-        discordRes.json(),
-        mcpRes.json(),
-      ]);
-
-      const latest = scrapeData?.latest ?? null;
+      const scrapeData = await trpc.scrape.status.query();
+      const latest = (scrapeData as any)?.latest ?? null;
 
       setState({
         mf: latest
@@ -197,8 +164,6 @@ export default function LinkedServicesPage() {
               records_saved: latest.records_saved ?? null,
             }
           : null,
-        discord: { running: Boolean(discordData?.running) },
-        mcp: { running: Boolean(mcpData?.running) },
         loading: false,
         error: null,
       });
@@ -214,6 +179,24 @@ export default function LinkedServicesPage() {
     const timer = setInterval(fetchStatuses, 10_000);
     return () => clearInterval(timer);
   }, [fetchStatuses]);
+
+  const triggerScrape = async () => {
+    setTriggering(true);
+    setTriggerMessage(null);
+    try {
+      await trpc.scrape.trigger.mutate();
+      setTriggerMessage("スクレイプを開始しました");
+      setTimeout(() => setTriggerMessage(null), 3000);
+      await fetchStatuses();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "不明なエラー";
+      console.warn("スクレイプトリガー失敗:", message);
+      setTriggerMessage(`開始に失敗しました: ${message}`);
+      setTimeout(() => setTriggerMessage(null), 4000);
+    } finally {
+      setTriggering(false);
+    }
+  };
 
   const mfBadge = getMfBadgeStatus(state.mf);
 
@@ -243,6 +226,24 @@ export default function LinkedServicesPage() {
         </div>
       )}
 
+      {triggerMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            background: triggerMessage.includes("失敗") ? "rgba(248,113,113,0.1)" : "rgba(74,222,128,0.1)",
+            border: `1px solid ${triggerMessage.includes("失敗") ? "#f8717140" : "#4ade8040"}`,
+            borderRadius: 8,
+            padding: "10px 16px",
+            color: triggerMessage.includes("失敗") ? "#f87171" : "#4ade80",
+            fontSize: 13,
+            marginBottom: 16,
+          }}
+        >
+          {triggerMessage}
+        </div>
+      )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {/* マネーフォワード */}
         <ServiceCard
@@ -262,21 +263,26 @@ export default function LinkedServicesPage() {
             label="保存件数"
             value={state.mf?.records_saved != null ? `${state.mf.records_saved} 件` : "—"}
           />
+          <div style={{ marginTop: 8 }}>
+            <button
+              onClick={triggerScrape}
+              disabled={triggering || state.mf?.status === "running"}
+              aria-label="手動スクレイプを実行"
+              style={{
+                background: triggering || state.mf?.status === "running" ? "#334155" : "#3b82f6",
+                color: triggering || state.mf?.status === "running" ? "#94a3b8" : "white",
+                border: "none",
+                borderRadius: 8,
+                padding: "8px 20px",
+                fontSize: 13,
+                cursor: triggering || state.mf?.status === "running" ? "not-allowed" : "pointer",
+                fontWeight: 600,
+              }}
+            >
+              {triggering ? "開始中..." : state.mf?.status === "running" ? "実行中..." : "今すぐ同期"}
+            </button>
+          </div>
         </ServiceCard>
-
-        {/* Discord Bot */}
-        <ServiceCard
-          title="Discord Bot"
-          description="朝イチで資産サマリーを Discord チャンネルに投稿します。"
-          badgeStatus={state.discord ? (state.discord.running ? "running" : "stopped") : "idle"}
-        />
-
-        {/* MCP Server */}
-        <ServiceCard
-          title="MCP Server"
-          description="Claude Desktop / Cursor などの AI ツールと資産データを連携します。"
-          badgeStatus={state.mcp ? (state.mcp.running ? "running" : "stopped") : "idle"}
-        />
       </div>
     </div>
   );

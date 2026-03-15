@@ -1,11 +1,11 @@
-import { api } from "@/lib/api";
+import { trpc } from "@/lib/trpc";
 import { formatJpy } from "@/lib/format";
 import IncomeExpenseChart from "@/components/charts/IncomeExpenseChart";
 
 export default async function IncomeExpensePage() {
   let data: any = { data: [], avg_income_jpy: 0, avg_expense_jpy: 0, avg_net_jpy: 0 };
   try {
-    data = await api.incomeExpense.get(12);
+    data = await trpc.incomeExpense.summary.query({ months: 12 });
   } catch {}
 
   return (

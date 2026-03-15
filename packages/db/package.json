@@ -1,0 +1,26 @@
+{
+  "name": "@assetbridge/db",
+  "version": "0.0.1",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts",
+    "./client": "./src/client.ts",
+    "./repos/settings": "./src/repos/settings.ts",
+    "./repos/assets": "./src/repos/assets.ts",
+    "./repos/snapshots": "./src/repos/snapshots.ts",
+    "./repos/job-queue": "./src/repos/job-queue.ts"
+  },
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.38.0",
+    "@assetbridge/types": "workspace:*"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.30.0",
+    "bun-types": "latest"
+  }
+}

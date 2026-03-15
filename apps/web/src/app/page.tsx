@@ -1,27 +1,30 @@
-import { api } from "@/lib/api";
+import { trpc } from "@/lib/trpc";
 import { formatJpy, formatPct, diffColor } from "@/lib/format";
 import AssetHistoryChart from "@/components/charts/AssetHistoryChart";
-import AiCommentSection from "@/components/AiCommentSection";
 
 async function getData() {
   try {
-    const [summary, history, allocation, pnl] = await Promise.all([
-      api.portfolio.summary(),
-      api.portfolio.history(30),
-      api.insights.allocation(),
-      api.insights.pnlRanking(5),
+    const [snapshot, history] = await Promise.all([
+      trpc.portfolio.snapshot.query({}),
+      trpc.portfolio.history.query({ days: 30 }),
     ]);
-    return { summary, history, allocation, pnl };
+    return { snapshot, history };
   } catch {
-    return { summary: null, history: null, allocation: null, pnl: null };
+    return { snapshot: null, history: null };
   }
 }
 
 export default async function DashboardPage() {
-  const { summary, history, pnl } = await getData();
-  const diffJpy = summary?.prev_day_diff_jpy ?? 0;
-  const diffPct = summary?.prev_day_diff_pct ?? 0;
+  const { snapshot, history } = await getData();
+  const diffJpy = snapshot?.prevDiffJpy ?? 0;
+  const diffPct = snapshot?.prevDiffPct ?? 0;
   const sign = diffJpy >= 0 ? "+" : "";
+
+  const topGainers = snapshot?.topGainers ?? [];
+  const topLosers = snapshot?.topLosers ?? [];
+  const pnlRanking = [...topGainers, ...topLosers]
+    .sort((a, b) => Math.abs(b.unrealizedPnlJpy) - Math.abs(a.unrealizedPnlJpy))
+    .slice(0, 5);
 
   return (
     <div>
@@ -32,7 +35,7 @@ export default async function DashboardPage() {
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
           <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>総資産</div>
           <div style={{ fontSize: 28, fontWeight: 700 }}>
-            {formatJpy(summary?.total_jpy ?? 0)}
+            {formatJpy(snapshot?.totalJpy ?? 0)}
           </div>
           <div style={{ fontSize: 14, color: diffColor(diffJpy), marginTop: 4 }}>
             {sign}{formatJpy(Math.abs(diffJpy))} ({formatPct(diffPct)})
@@ -40,12 +43,12 @@ export default async function DashboardPage() {
         </div>
 
         {/* カテゴリ別内訳 */}
-        {summary?.breakdown && Object.entries({
-          "日本株": summary.breakdown.stock_jp_jpy,
-          "米国株": summary.breakdown.stock_us_jpy,
-          "投資信託": summary.breakdown.fund_jpy,
-          "暗号資産": summary.breakdown.crypto_jpy,
-          "現金": summary.breakdown.cash_jpy,
+        {snapshot?.breakdown && Object.entries({
+          "日本株": snapshot.breakdown.stockJpJpy,
+          "米国株": snapshot.breakdown.stockUsJpy,
+          "投資信託": snapshot.breakdown.fundJpy,
+          "暗号資産": snapshot.breakdown.cryptoJpy,
+          "現金": snapshot.breakdown.cashJpy,
         }).map(([name, value]) => (
           <div key={name} style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
             <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>{name}</div>
@@ -62,11 +65,8 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* AIコメント（クライアント側でボタン生成） */}
-      <AiCommentSection />
-
       {/* 含み損益 TOP5 */}
-      {pnl?.ranking && pnl.ranking.length > 0 && (
+      {pnlRanking.length > 0 && (
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>含み損益 TOP5</h2>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
@@ -78,16 +78,16 @@ export default async function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {pnl.ranking.slice(0, 5).map((item: any) => {
-                const pnlJpy = item.unrealized_pnl_jpy;
+              {pnlRanking.map((item) => {
+                const pnlJpy = item.unrealizedPnlJpy;
                 const s = pnlJpy >= 0 ? "+" : "";
                 const c = pnlJpy >= 0 ? "#4ade80" : "#f87171";
                 return (
-                  <tr key={item.asset_id} style={{ borderBottom: "1px solid #1e293b" }}>
+                  <tr key={item.assetId} style={{ borderBottom: "1px solid #1e293b" }}>
                     <td style={{ padding: "10px 0" }}>{item.name}</td>
-                    <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(item.value_jpy)}</td>
+                    <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(item.valueJpy)}</td>
                     <td style={{ textAlign: "right", padding: "10px 0", color: c }}>
-                      {s}{formatJpy(Math.abs(pnlJpy))} ({s}{item.unrealized_pnl_pct.toFixed(1)}%)
+                      {s}{formatJpy(Math.abs(pnlJpy))} ({s}{item.unrealizedPnlPct.toFixed(1)}%)
                     </td>
                   </tr>
                 );
@@ -97,7 +97,7 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {!summary && (
+      {!snapshot && (
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 32, textAlign: "center", color: "#94a3b8" }}>
           データがありません。スクレイパーを実行してデータを取得してください。
         </div>
