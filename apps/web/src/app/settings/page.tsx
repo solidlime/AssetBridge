@@ -79,6 +79,10 @@ export default function SettingsPage() {
   const [llmProviders, setLlmProviders] = useState<Record<string, { set: boolean; masked: string }>>({});
   const [savingLlm, setSavingLlm] = useState(false);
 
+  // --- 2FA コード ---
+  const [twoFaCode, setTwoFaCode] = useState("");
+  const [submitting2fa, setSubmitting2fa] = useState(false);
+
   // --- MCP Server ---
   const [mcpHost, setMcpHost] = useState("0.0.0.0");
   const [mcpPort, setMcpPort] = useState(8001);
@@ -359,6 +363,26 @@ export default function SettingsPage() {
     }
   };
 
+  // 2FA コード送信
+  const submit2faCode = async () => {
+    if (!twoFaCode.trim()) return;
+    setSubmitting2fa(true);
+    try {
+      const res = await fetch(`${API_URL}/api/scrape/2fa`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ code: twoFaCode.trim() }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      setTwoFaCode("");
+      showMessage("2FAコードを送信しました", true);
+    } catch {
+      showMessage("2FAコードの送信に失敗しました", false);
+    } finally {
+      setSubmitting2fa(false);
+    }
+  };
+
   const hourOptions = Array.from({ length: 24 }, (_, i) => i);
   const minuteOptions = [0, 15, 30, 45];
 
@@ -484,7 +508,58 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* --- 3. AI コメント更新頻度 --- */}
+      {/* --- 3. 2FA コード入力 --- */}
+      <div style={cardStyle}>
+        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+          2FA コード入力（スクレイプ認証）
+        </h2>
+        <p style={descStyle}>
+          スクレイプ実行中に MoneyForward のメール 2FA が必要になった場合、ここにコードを入力してください。
+          入力後、スクレイパーが自動的にコードを受け取って認証を続行します。
+        </p>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <label
+              htmlFor="2fa-code"
+              style={{ fontSize: 13, color: "#94a3b8", display: "block", marginBottom: 4 }}
+            >
+              認証コード
+            </label>
+            <input
+              id="2fa-code"
+              type="text"
+              value={twoFaCode}
+              onChange={(e) => setTwoFaCode(e.target.value)}
+              placeholder="例: 12345678"
+              maxLength={8}
+              aria-label="2FA 認証コード"
+              onKeyDown={(e) => e.key === "Enter" && submit2faCode()}
+              style={{
+                width: "100%",
+                boxSizing: "border-box",
+                background: "#0f172a",
+                color: "#e2e8f0",
+                border: "1px solid #334155",
+                borderRadius: 8,
+                padding: "8px 12px",
+                fontSize: 20,
+                letterSpacing: "0.2em",
+                fontFamily: "monospace",
+              }}
+            />
+          </div>
+          <button
+            onClick={submit2faCode}
+            disabled={submitting2fa || !twoFaCode.trim()}
+            aria-label="2FAコードを送信"
+            style={buttonStyle("#f59e0b", submitting2fa || !twoFaCode.trim())}
+          >
+            {submitting2fa ? "送信中..." : "送信"}
+          </button>
+        </div>
+      </div>
+
+      {/* --- 4. AI コメント更新頻度 --- */}
       <div style={cardStyle}>
         <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
           AI コメント更新頻度
@@ -533,7 +608,7 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
-      {/* --- 4. LLM 設定 --- */}
+      {/* --- 5. LLM 設定 --- */}
       <div style={cardStyle}>
         <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>LLM 設定</h2>
         <p style={descStyle}>
@@ -676,7 +751,7 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      {/* --- 5. Discord Bot --- */}
+      {/* --- 6. Discord Bot --- */}
       <div style={cardStyle}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Discord Bot</h2>
@@ -764,7 +839,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* --- 6. MCP Server --- */}
+      {/* --- 7. MCP Server --- */}
       <div style={cardStyle}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>MCP Server</h2>

@@ -20,8 +20,9 @@ export default function AiCommentSection() {
       const data = (await res.json()) as { portfolio?: string; pnl?: string };
       setPortfolioComment(data.portfolio ?? null);
       setPnlComment(data.pnl ?? null);
-    } catch {
-      setPortfolioComment("AIコメントの生成に失敗しました。");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setPortfolioComment(`AIコメントの生成に失敗しました。(${msg})`);
     } finally {
       setLoading(false);
     }

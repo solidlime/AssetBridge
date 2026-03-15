@@ -32,7 +32,8 @@ fi
 for arg in "$@"; do
   case "$arg" in
     --no-start)      NO_START=true ;;
-    --install-deps)  SKIP_DEPS=false ;;  # 存在していても強制再インストール
+    --install-deps)  SKIP_DEPS=false ;;
+    --skip-deps)     SKIP_DEPS=true ;;
     --with-mcp)      WITH_MCP=true ;;
     --with-discord)  WITH_DISCORD=true ;;
     --auto-scrape)   AUTO_SCRAPE=true ;;
@@ -64,18 +65,31 @@ echo ""
 # =========================================================
 kill_port() {
   local port=$1
-  local pid=""
+  local pids=""
 
   if command -v lsof &>/dev/null; then
-    pid=$(lsof -ti:"$port" 2>/dev/null | head -1)
-    if [ -n "$pid" ]; then
-      info "ポート ${port} の既存プロセス (PID: ${pid}) を終了中..."
-      kill -9 "$pid" 2>/dev/null || true
+    pids=$(lsof -ti:"$port" 2>/dev/null)
+    if [ -n "$pids" ]; then
+      info "ポート ${port} の既存プロセスを終了中..."
+      echo "$pids" | xargs kill -9 2>/dev/null || true
       sleep 1
     fi
   elif command -v fuser &>/dev/null; then
     fuser -k "${port}/tcp" 2>/dev/null || true
     sleep 1
+  fi
+}
+
+# プロセスグループごと終了
+kill_tree() {
+  local pid=$1
+  [ -z "$pid" ] && return
+  local pgid
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [ -n "$pgid" ] && [ "$pgid" -ne 1 ] 2>/dev/null; then
+    kill -- -"$pgid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+  else
+    kill -9 "$pid" 2>/dev/null || true
   fi
 }
 
@@ -252,28 +266,61 @@ WEB_PORT="${WEB_PORT:-3000}"
 API_PORT="${API_PORT:-8000}"
 MCP_PORT="${MCP_PORT:-8001}"
 
+LOGS_DIR="$PROJECT_ROOT/logs"
+PIDS_DIR="$PROJECT_ROOT/.pids"
+mkdir -p "$LOGS_DIR" "$PIDS_DIR"
+
 # ---- 既存プロセスを停止 ----
 info "既存プロセスを確認・停止中..."
 kill_port "$API_PORT"
 kill_port "$WEB_PORT"
 [ "$WITH_MCP" = true ] && kill_port "$MCP_PORT"
+sleep 1
+
+# nohup + disown でターミナルを閉じてもプロセスが死なないようにする
+start_service() {
+  local name="$1"
+  local logfile="$LOGS_DIR/${name}.log"
+  shift
+  nohup "$@" >> "$logfile" 2>&1 &
+  local pid=$!
+  disown "$pid" 2>/dev/null || true
+  echo "$pid" > "$PIDS_DIR/${name}.pid"
+  echo "$pid"
+}
 
 # ---- [1/2] FastAPI ----
 info "[1/2] FastAPI を起動中 (port ${API_PORT})..."
-cd "$PROJECT_ROOT/apps/api" && PYTHONPATH="$PROJECT_ROOT" python -m uvicorn src.main:app \
-  --host 0.0.0.0 --port "$API_PORT" --reload &
-API_PID=$!
-cd "$PROJECT_ROOT"
+API_PID=$(start_service api \
+  bash -c "cd '$PROJECT_ROOT/apps/api' && PYTHONPATH='$PROJECT_ROOT' python -m uvicorn src.main:app \
+  --host 0.0.0.0 --port $API_PORT")
 
-sleep 2
+info "FastAPI の起動を確認中..."
+for i in $(seq 1 20); do
+  if curl -sf "http://localhost:${API_PORT}/health" >/dev/null 2>&1; then
+    success "FastAPI 起動確認 (${i}秒)"
+    break
+  fi
+  [ "$i" -eq 20 ] && warn "FastAPI 起動確認タイムアウト（ログ: $LOGS_DIR/api.log）"
+  sleep 1
+done
 
 # ---- [2/2] Next.js ----
 WEB_PID=""
 if command -v pnpm &>/dev/null; then
   info "[2/2] Next.js を起動中 (port ${WEB_PORT})..."
-  cd "$PROJECT_ROOT/apps/web" && pnpm dev --port "$WEB_PORT" &
-  WEB_PID=$!
-  cd "$PROJECT_ROOT"
+  WEB_PID=$(start_service web \
+    bash -c "cd '$PROJECT_ROOT/apps/web' && pnpm dev --port $WEB_PORT")
+
+  info "Next.js の起動を確認中（初回は1分程度かかる場合があります）..."
+  for i in $(seq 1 60); do
+    if curl -sf "http://localhost:${WEB_PORT}/" >/dev/null 2>&1; then
+      success "Next.js 起動確認 (${i}秒)"
+      break
+    fi
+    [ "$i" -eq 60 ] && warn "Next.js 起動確認タイムアウト（ログ: $LOGS_DIR/web.log）"
+    sleep 1
+  done
 else
   warn "pnpm が見つからないため Next.js をスキップ"
 fi
@@ -282,9 +329,8 @@ fi
 MCP_PID=""
 if [ "$WITH_MCP" = true ]; then
   info "[+MCP] MCP サーバを起動中 (port ${MCP_PORT})..."
-  cd "$PROJECT_ROOT/apps/mcp" && PYTHONPATH="$PROJECT_ROOT" python -m src.server &
-  MCP_PID=$!
-  cd "$PROJECT_ROOT"
+  MCP_PID=$(start_service mcp \
+    bash -c "cd '$PROJECT_ROOT/apps/mcp' && PYTHONPATH='$PROJECT_ROOT' python -m src.server")
 fi
 
 # ---- Discord Bot（オプション） ----
@@ -292,12 +338,19 @@ BOT_PID=""
 if [ "$WITH_DISCORD" = true ]; then
   if [ -n "${DISCORD_TOKEN:-}" ]; then
     info "[+Discord] Discord Bot を起動中..."
-    cd "$PROJECT_ROOT/apps/discord-bot" && PYTHONPATH="$PROJECT_ROOT" python -m src.bot &
-    BOT_PID=$!
-    cd "$PROJECT_ROOT"
+    BOT_PID=$(start_service bot \
+      bash -c "cd '$PROJECT_ROOT/apps/discord-bot' && PYTHONPATH='$PROJECT_ROOT' python -m src.bot")
   else
     warn "[+Discord] DISCORD_TOKEN が未設定のため Discord Bot をスキップ"
   fi
+fi
+
+# スクレイパー自動起動（オプション）
+if [ "$AUTO_SCRAPE" = true ]; then
+  info "スクレイパーを自動起動します..."
+  curl -s -X POST "http://localhost:${API_PORT}/api/scrape/trigger" \
+    -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" >/dev/null \
+    && info "スクレイパートリガー送信済み" || warn "スクレイパートリガー失敗"
 fi
 
 echo ""
@@ -307,44 +360,9 @@ echo "========================================"
 echo "  FastAPI Swagger: http://localhost:${API_PORT}/docs"
 echo "  Web Dashboard:   http://localhost:${WEB_PORT}"
 [ "$WITH_MCP" = true ] && echo "  MCP Server:      http://localhost:${MCP_PORT}/mcp"
+[ -n "${BOT_PID}" ]    && echo "  Discord Bot:     起動中"
 echo ""
-echo "  MCP / Discord Bot は Web UI 設定ページから起動できます"
-[ "$AUTO_SCRAPE" = false ] && echo "  スクレイパー:    手動実行 (--auto-scrape で自動化)"
-echo ""
-echo "  Ctrl+C で全サービスを停止"
+echo "  ★ ターミナルを閉じてもサービスは継続稼働します"
+echo "  停止するには: bash scripts/stop.sh"
+echo "  ログ:          $LOGS_DIR/"
 echo "========================================"
-echo ""
-
-# スクレイパー自動起動（オプション）
-if [ "$AUTO_SCRAPE" = true ]; then
-  info "スクレイパーを自動起動します（API 準備完了後）..."
-  (
-    for _ in $(seq 1 30); do
-      if curl -sf "http://localhost:${API_PORT}/health" >/dev/null 2>&1; then
-        curl -s -X POST "http://localhost:${API_PORT}/api/scrape/trigger" \
-          -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" >/dev/null
-        echo "[INFO] スクレイパートリガー送信済み"
-        exit 0
-      fi
-      sleep 2
-    done
-    echo "[WARN] API が起動しなかったためスクレイパーをスキップ"
-  ) &
-fi
-
-# Ctrl+C で全プロセスを終了
-cleanup() {
-  echo ""
-  info "サービスを停止しています..."
-  # shellcheck disable=SC2086
-  kill $API_PID ${WEB_PID:-} ${MCP_PID:-} ${BOT_PID:-} 2>/dev/null || true
-  # shellcheck disable=SC2086
-  wait $API_PID ${WEB_PID:-} ${MCP_PID:-} ${BOT_PID:-} 2>/dev/null || true
-  success "停止完了"
-}
-
-trap cleanup INT TERM
-
-set +e
-wait
-set -e

@@ -49,12 +49,13 @@ class BaseScraper(ABC):
             ),
             viewport={"width": 1280, "height": 800},
         )
-        # playwright-stealth: ボット検知回避のため試みる（未インストールの場合はスキップ）
+        # playwright-stealth: ボット検知回避のため試みる（v2.x 対応）
         try:
-            from playwright_stealth import stealth_async  # type: ignore[import]
-            await stealth_async(self._context)
-        except ImportError:
-            logger.warning("playwright-stealth がインストールされていないため stealth モードをスキップ")
+            from playwright_stealth import Stealth  # type: ignore[import]
+            await Stealth().apply_stealth_async(self._context)
+            logger.debug("playwright-stealth 適用完了")
+        except Exception as e:
+            logger.warning("playwright-stealth 適用スキップ: %s", e)
 
         self._page = await self._context.new_page()
 
@@ -101,12 +102,17 @@ class BaseScraper(ABC):
 
                 cookies = self.session_manager.load_session()
                 if cookies and self._context:
+                    # 保存済みCookieをコンテキストに注入した上で login() を呼び、
+                    # 実際にサイトへアクセスしてセッションが有効かどうかを確認する。
+                    # login() は既にログイン済みと判定した場合は即 True を返す設計。
                     await self._context.add_cookies(cookies)
-                    logger.info("セッション復元成功")
-                else:
-                    logger.info("セッションなし: 新規ログインを実行")
-                    if not await self.login():
-                        raise RuntimeError("ログイン失敗")
+                    logger.info("保存済みCookieを注入: セッション有効性を確認します")
+
+                if not await self.login():
+                    # ログイン失敗時はセッションファイルを削除して次のリトライを
+                    # クリーンな状態（Cookieなし）から始められるようにする。
+                    self.session_manager.clear_session()
+                    raise RuntimeError("ログイン失敗")
 
                 return await self.scrape()
 

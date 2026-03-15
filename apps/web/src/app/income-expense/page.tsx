@@ -51,7 +51,13 @@ export default async function IncomeExpensePage() {
             </tr>
           </thead>
           <tbody>
-            {(data.data || []).map((cf: any) => {
+            {(data.data || []).length === 0 ? (
+              <tr>
+                <td colSpan={4} style={{ textAlign: "center", padding: "32px 0", color: "#475569", fontSize: 13 }}>
+                  収支データがありません。スクレイプを実行してデータを取得してください。
+                </td>
+              </tr>
+            ) : (data.data || []).map((cf: any) => {
               const net = cf.net_jpy;
               const c = net >= 0 ? "#4ade80" : "#f87171";
               return (

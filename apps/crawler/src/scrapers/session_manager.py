@@ -12,11 +12,31 @@ class SessionManager:
         key = encryption_key.encode() if isinstance(encryption_key, str) else encryption_key
         self.fernet = Fernet(key)
 
-    def save_session(self, cookies: list[dict], expires_hours: int = 24) -> None:
+    def save_session(self, cookies: list[dict], expires_hours: int = 720) -> None:
+        """セッションを暗号化して保存する。
+
+        Cookie に expires フィールドが存在する場合はその最大値を期限として採用し、
+        存在しない場合は expires_hours（デフォルト 720 時間 = 30日）を使用する。
+        """
+        # Playwright が返す Cookie の expires は Unix timestamp (float) で格納されている。
+        # 負値（-1）は "セッションCookie（ブラウザ終了まで有効）" を意味するため無視する。
+        valid_expires_timestamps = [
+            c["expires"]
+            for c in cookies
+            if isinstance(c.get("expires"), (int, float)) and c["expires"] > 0
+        ]
+
+        if valid_expires_timestamps:
+            # 最も遅い（最大の）expires を採用してセッション全体の有効期限とする
+            max_ts = max(valid_expires_timestamps)
+            expires_at = datetime.utcfromtimestamp(max_ts)
+        else:
+            expires_at = datetime.utcnow() + timedelta(hours=expires_hours)
+
         data = {
             "cookies": cookies,
             "saved_at": datetime.utcnow().isoformat(),
-            "expires_at": (datetime.utcnow() + timedelta(hours=expires_hours)).isoformat(),
+            "expires_at": expires_at.isoformat(),
         }
         encrypted = self.fernet.encrypt(json.dumps(data).encode())
         self.path.write_bytes(encrypted)

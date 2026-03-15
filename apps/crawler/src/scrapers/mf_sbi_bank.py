@@ -34,8 +34,13 @@ class MFSBIScraper(BaseScraper):
             await self._random_wait()
 
             current_url = self._page.url
-            # ログイン不要（sign_in でない ssnb ページにいる）
-            if "ssnb.x.moneyforward.com" in current_url and "sign_in" not in current_url:
+            # ログイン不要（sign_in でも two_step でもない ssnb ページにいる）
+            # NOTE: two_step を除外しないと 2FA ページを「ログイン済み」と誤認識する
+            if (
+                "ssnb.x.moneyforward.com" in current_url
+                and "sign_in" not in current_url
+                and "two_step" not in current_url
+            ):
                 logger.info("既にログイン済み (URL: %s)", current_url)
                 return True
 
@@ -105,6 +110,8 @@ class MFSBIScraper(BaseScraper):
                 logger.info("TOTP 2FA: 自動入力")
                 await self._page.fill('input[name="verification_code"]', code)
                 await self._page.click('input[name="commit"][type="submit"]')
+                # 送信後にリダイレクトが完了するまで待機する
+                await self._random_wait(2.0, 4.0)
                 return True
             except Exception as e:
                 logger.warning("TOTP_SEED が無効なため TOTP をスキップ: %s", e)
@@ -117,7 +124,13 @@ class MFSBIScraper(BaseScraper):
             verify_url = f"{self.BASE_URL}/users/two_step_verifications/verify/{env_code}"
             try:
                 await self._page.goto(verify_url, wait_until="networkidle")
-                if "two_step" not in self._page.url:
+                # 認証URLへのナビゲート成功の確認:
+                # ssnb.x.moneyforward.com のページにいて、かつ two_step ページでない場合のみ成功とみなす。
+                # id.moneyforward.com 等の外部ドメインに飛ばされた場合は失敗扱いにしてフォーム方式を試みる。
+                if (
+                    "ssnb.x.moneyforward.com" in self._page.url
+                    and "two_step" not in self._page.url
+                ):
                     logger.info("URL 認証成功: %s", self._page.url)
                     return True
             except Exception:
@@ -125,18 +138,46 @@ class MFSBIScraper(BaseScraper):
             # 方法2: フォームに入力して送信
             await self._page.fill('input[name="verification_code"]', env_code)
             await self._page.click('input[name="commit"][type="submit"]')
+            # 送信後にリダイレクトが完了するまで待機する
+            await self._random_wait(2.0, 4.0)
             return True
 
-        # 手動入力モード: コードファイルを監視（300秒タイムアウト）
-        code_file = "/tmp/mf_2fa_code.txt"
+        # 手動入力モード: DB（app_settings: mf_2fa_pending_code）またはファイルを監視（10分タイムアウト）
+        # NOTE: Windows では /tmp は Git Bash 仮想パスであり Python の tempfile と不一致になるため、
+        #       DB ポーリングを優先し、ファイルは tempfile.gettempdir() の実パスを使用する。
+        import tempfile
+        code_file = os.path.join(tempfile.gettempdir(), "mf_2fa_code.txt")
         logger.warning(
             "メール 2FA が必要です。以下のいずれかでコードを入力してください:\n"
-            "  1) echo <コード> > %s\n"
-            "  2) 環境変数 MF_2FA_CODE=<コード> を設定して再実行",
+            "  1) Web UI の設定ページ → '2FA コード入力' セクションに入力\n"
+            "  2) echo <コード> > %s\n"
+            "  3) 環境変数 MF_2FA_CODE=<コード> を設定して再実行",
             code_file,
         )
         for _ in range(60):  # 10秒×60回 = 10分
             await asyncio.sleep(10)
+
+            # 方法1: DB から取得（Web UI 経由で POST /scrape/2fa が書き込んだコード）
+            try:
+                from apps.api.src.db.database import db_session
+                from apps.api.src.db.repositories import AppSettingsRepository
+                with db_session() as db:
+                    repo = AppSettingsRepository(db)
+                    db_code = repo.get("mf_2fa_pending_code")
+                    if db_code:
+                        # 消費済みとして空文字にリセットしてから使用する
+                        repo.set("mf_2fa_pending_code", "")
+                        code = db_code.strip()
+                        if code:
+                            logger.info("DB からコード取得: %s", code)
+                            await self._page.fill('input[name="verification_code"]', code)
+                            await self._page.click('input[name="commit"][type="submit"]')
+                            await self._random_wait(2.0, 4.0)
+                            return True
+            except Exception as e:
+                logger.debug("DB ポーリングエラー（継続）: %s", e)
+
+            # 方法2: ファイルから取得（tempfile.gettempdir() の実パスを使用）
             if os.path.exists(code_file):
                 with open(code_file) as f:
                     code = f.read().strip()
@@ -145,7 +186,9 @@ class MFSBIScraper(BaseScraper):
                     logger.info("ファイルからコード取得: %s", code)
                     await self._page.fill('input[name="verification_code"]', code)
                     await self._page.click('input[name="commit"][type="submit"]')
+                    await self._random_wait(2.0, 4.0)
                     return True
+
         logger.error("2FA タイムアウト（10分）")
         return False
 
@@ -175,6 +218,15 @@ class MFSBIScraper(BaseScraper):
 
         await self._page.goto(self.PORTFOLIO_URL, wait_until="networkidle")
         await self._random_wait()
+
+        # ログインページへのリダイレクトを検出した場合はセッションが期限切れと判断し、
+        # 保存済みセッションを削除してから RuntimeError を送出する。
+        # 上位の run_with_retry() が次のリトライでクリーンなログインを行う。
+        current_url = self._page.url
+        if "sign_in" in current_url or "id.moneyforward.com" in current_url:
+            logger.warning("スクレイプ中にログインリダイレクト検出 — セッションが無効 (URL: %s)", current_url)
+            self.session_manager.clear_session()
+            raise RuntimeError("セッション期限切れ: 再ログインが必要")
 
         data: dict = {}
         error_msg: str | None = None
@@ -381,9 +433,13 @@ class MFSBIScraper(BaseScraper):
             total_jpy = total_data.get("total_jpy")
             if total_jpy:
                 prev_list = daily_repo.get_history(days=1)
-                prev_total = prev_list[-1].total_jpy if prev_list else 0.0
-                diff = total_jpy - prev_total
-                diff_pct = (diff / prev_total * 100.0) if prev_total else 0.0
+                if prev_list:
+                    prev_total = prev_list[-1].total_jpy
+                    diff = total_jpy - prev_total
+                    diff_pct = (diff / prev_total * 100.0) if prev_total else 0.0
+                else:
+                    diff = 0.0
+                    diff_pct = 0.0
 
                 breakdown = total_data.get("breakdown", {})
                 category_kwargs: dict[str, float] = {}

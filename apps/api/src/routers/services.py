@@ -107,7 +107,7 @@ def get_discord_settings(_: None = Depends(verify_api_key)) -> dict:
         channel_id = repo.get_discord_channel_id()
     masked = (
         f"{token[:6]}...{token[-4:]}"
-        if len(token) > 10
+        if token and len(token) > 10
         else ("****" if token else "")
     )
     return {

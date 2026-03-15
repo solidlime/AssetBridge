@@ -29,6 +29,7 @@ out/
 data/assetbridge.db
 data/sessions/
 data/screenshots/
+data/.encryption_key
 data/*.png
 data/*.jpg
 apps/api/data/

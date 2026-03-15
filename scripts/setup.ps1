@@ -40,17 +40,23 @@ function Warn    { param($msg) Write-Host "[WARN] $msg" -ForegroundColor Yellow 
 function Err     { param($msg) Write-Host "[ERR]  $msg" -ForegroundColor Red }
 
 # =========================================================
-# ポート解放ユーティリティ
+# ポート解放ユーティリティ（taskkill /F /T でプロセスツリーごと強制終了）
 # =========================================================
 function Kill-Port {
     param([int]$Port)
     $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
             Select-Object -First 1
     if ($conn) {
-        Info "ポート $Port の既存プロセス (PID: $($conn.OwningProcess)) を終了中..."
-        Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+        Info "ポート $Port の既存プロセスツリー (PID: $($conn.OwningProcess)) を終了中..."
+        & taskkill /F /T /PID $conn.OwningProcess 2>$null | Out-Null
         Start-Sleep -Seconds 1
     }
+}
+
+function Kill-Tree {
+    param([System.Diagnostics.Process]$Proc)
+    if ($null -eq $Proc -or $Proc.HasExited) { return }
+    & taskkill /F /T /PID $Proc.Id 2>$null | Out-Null
 }
 
 Write-Host ""
@@ -170,12 +176,16 @@ if (-not (Test-Path $EnvFile)) {
 }
 
 # .env を読み込んで環境変数に展開（CRLF 対応）
+# クォートを除去後、インラインコメント（スペース + # ...）も除去する。
+# 例: API_KEY=abc123   # コメント → "abc123" として取得される。
 $envVars = @{}
 Get-Content $EnvFile | ForEach-Object {
     $line = $_.TrimEnd("`r")
     if ($line -match "^([^#=]+)=(.*)$") {
         $key = $matches[1].Trim()
-        $val = $matches[2].Trim().Trim('"').Trim("'")
+        $raw = $matches[2].Trim().Trim('"').Trim("'")
+        # インラインコメント（スペース1個以上 + # で始まる部分）を除去
+        $val = ($raw -split '\s+#')[0].Trim()
         $envVars[$key] = $val
         [System.Environment]::SetEnvironmentVariable($key, $val, "Process")
     }
@@ -254,24 +264,62 @@ Kill-Port $ApiPortInt
 Kill-Port $WebPort
 if ($WithMcp) { Kill-Port $McpPort }
 
+# ログ保存先
+$LogDir = Join-Path $ProjectRoot "logs"
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
+$ApiLog    = Join-Path $LogDir "api.log"
+$ApiErrLog = Join-Path $LogDir "api.err.log"
+$WebLog    = Join-Path $LogDir "web.log"
+$WebErrLog = Join-Path $LogDir "web.err.log"
+
 # ---- FastAPI ----
 Info "[1/2] FastAPI を起動中 (port $ApiPortInt)..."
 $apiDir = Join-Path $ProjectRoot "apps\api"
 $ApiFastApi = Start-Process -FilePath $VenvPython `
     -ArgumentList "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "$ApiPortInt", "--reload" `
     -WorkingDirectory $apiDir `
+    -RedirectStandardOutput $ApiLog -RedirectStandardError $ApiErrLog `
     -PassThru -WindowStyle Hidden
-Start-Sleep -Seconds 2
+
+# FastAPI の起動を最大 30 秒待機
+# Invoke-WebRequest は Windows のプロキシ設定に影響を受けてタイムアウトすることがある。
+# そのため curl.exe（Windows 10 以降にプリインストール）を優先し、
+# 失敗時は System.Net.WebClient にフォールバックする。
+$apiReady = $false
+for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 2
+    try {
+        # 方法1: curl.exe（プロキシ設定を無視して直接接続）
+        # Windows では /dev/null ではなく NUL を使ってボディを破棄する
+        $curlResult = & curl.exe -s -o NUL -w "%{http_code}" --max-time 2 --noproxy "*" "http://localhost:$ApiPortInt/health" 2>$null
+        if ($curlResult -eq "200") { $apiReady = $true; break }
+    } catch {}
+    try {
+        # 方法2: System.Net.WebClient（Invoke-WebRequest より軽量でプロキシ問題が少ない）
+        $wc = New-Object System.Net.WebClient
+        $wc.Proxy = $null  # プロキシを明示的に無効化
+        $body = $wc.DownloadString("http://localhost:$ApiPortInt/health")
+        if ($body -match '"ok"') { $apiReady = $true; break }
+    } catch {}
+}
+if ($apiReady) {
+    Success "FastAPI 起動完了"
+} else {
+    Err "FastAPI の起動を確認できませんでした。ログを確認してください: $ApiLog"
+}
 
 # ---- Next.js ----
 $WebProc = $null
 if ($pnpmAvailable) {
     Info "[2/2] Next.js を起動中 (port $WebPort)..."
     $webDir = Join-Path $ProjectRoot "apps\web"
-    $WebProc = Start-Process -FilePath "pnpm" `
-        -ArgumentList "dev", "--port", "$WebPort" `
+    # Start-Process は .cmd/.ps1 を直接実行できないため cmd.exe 経由で起動
+    $WebProc = Start-Process -FilePath "cmd.exe" `
+        -ArgumentList "/c", "pnpm", "dev", "--port", "$WebPort" `
         -WorkingDirectory $webDir `
+        -RedirectStandardOutput $WebLog -RedirectStandardError $WebErrLog `
         -PassThru -WindowStyle Hidden
+    Info "Next.js ログ: $WebLog"
 } else {
     Warn "pnpm が見つからないため Next.js をスキップ"
 }
@@ -324,13 +372,19 @@ if ($AutoScrape) {
     Start-Job -ScriptBlock {
         param($port, $key)
         for ($i = 0; $i -lt 30; $i++) {
-            try {
-                $r = Invoke-WebRequest -Uri "http://localhost:$port/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-                Invoke-RestMethod -Uri "http://localhost:$port/api/scrape/trigger" `
-                    -Method POST -Headers @{"X-API-Key" = $key; "Content-Type" = "application/json"} -ErrorAction Stop
-                Write-Host "[INFO] スクレイパートリガー送信済み"
-                break
-            } catch { Start-Sleep -Seconds 2 }
+            # Invoke-WebRequest はプロキシ設定の影響でタイムアウトするため curl.exe を使用
+            # Windows では /dev/null ではなく NUL を使ってボディを破棄する
+            $status = & curl.exe -s -o NUL -w "%{http_code}" --max-time 2 --noproxy "*" "http://localhost:$port/health" 2>$null
+            if ($status -eq "200") {
+                try {
+                    $triggerResult = & curl.exe -s -X POST --max-time 5 --noproxy "*" `
+                        -H "X-API-Key: $key" -H "Content-Type: application/json" `
+                        "http://localhost:$port/api/scrape/trigger" 2>$null
+                    Write-Host "[INFO] スクレイパートリガー送信済み: $triggerResult"
+                    break
+                } catch { }
+            }
+            Start-Sleep -Seconds 2
         }
     } -ArgumentList $ApiPortInt, $ApiKey | Out-Null
 }
@@ -347,9 +401,10 @@ try {
 } finally {
     Info "サービスを停止しています..."
     foreach ($proc in @($ApiFastApi, $WebProc, $McpProc, $BotProc)) {
-        if ($proc -and -not $proc.HasExited) {
-            $proc.Kill()
-        }
+        Kill-Tree $proc
     }
+    # 念のため残存ポートを解放
+    Kill-Port $ApiPortInt
+    Kill-Port $WebPort
     Success "停止完了"
 }

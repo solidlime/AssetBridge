@@ -14,6 +14,18 @@ export default function SimulatorPage() {
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
+  // API レスポンスの year_labels + percentiles を SimulatorChart 用の配列に変換
+  const chartData = result
+    ? (result.year_labels ?? []).map((year: number, i: number) => ({
+        year,
+        p10: result.percentiles?.p10?.[i] ?? 0,
+        p25: result.percentiles?.p25?.[i] ?? 0,
+        p50: result.percentiles?.p50?.[i] ?? 0,
+        p75: result.percentiles?.p75?.[i] ?? 0,
+        p90: result.percentiles?.p90?.[i] ?? 0,
+      }))
+    : [];
+
   const run = async () => {
     setLoading(true);
     try {
@@ -99,10 +111,10 @@ export default function SimulatorPage() {
       {result && (
         <>
           {/* パーセンタイル推移グラフ */}
-          {result.yearly_data && result.yearly_data.length > 0 && (
+          {chartData.length > 0 && (
             <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
               <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{result.years}年間の資産推移シミュレーション</h2>
-              <SimulatorChart data={result.yearly_data} />
+              <SimulatorChart data={chartData} />
             </div>
           )}
 

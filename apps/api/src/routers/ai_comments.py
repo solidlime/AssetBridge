@@ -1,8 +1,19 @@
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 from ..config.settings import settings
-from ..core.ai_comments import generate_portfolio_comment, generate_pnl_comment, clear_cache
+from ..core.ai_comments import generate_portfolio_comment, generate_pnl_comment, generate_asset_comment, clear_cache
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+
+
+class AssetCommentRequest(BaseModel):
+    """POST /comments/asset のリクエストボディ。"""
+
+    symbol: str
+    name: str
+    value_jpy: float
+    unrealized_pnl_jpy: float
+    unrealized_pnl_pct: float
 
 
 def verify_api_key(x_api_key: str = Header(...)) -> None:
@@ -22,6 +33,22 @@ async def get_portfolio_comment(_: None = Depends(verify_api_key)) -> dict:
 async def get_pnl_comment(_: None = Depends(verify_api_key)) -> dict:
     """含み損益上位5銘柄に対する AI コメントを返す。キャッシュが有効な間は DB/LLM アクセスなし。"""
     comment = await generate_pnl_comment()
+    return {"comment": comment}
+
+
+@router.post("/comments/asset")
+async def get_asset_comment(
+    body: AssetCommentRequest,
+    _: None = Depends(verify_api_key),
+) -> dict:
+    """特定銘柄の AI コメントを生成する。キャッシュなし（毎回生成）。"""
+    comment = await generate_asset_comment(
+        symbol=body.symbol,
+        name=body.name,
+        value_jpy=body.value_jpy,
+        unrealized_pnl_jpy=body.unrealized_pnl_jpy,
+        unrealized_pnl_pct=body.unrealized_pnl_pct,
+    )
     return {"comment": comment}
 
 
