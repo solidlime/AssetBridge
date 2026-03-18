@@ -23,8 +23,8 @@ export const scrapeRouter = router({
       const jobs = jobQueueRepo.getLogs(input.limit);
       return {
         logs: jobs.map((job) => {
-          const mappedStatus: "success" | "pending" | "running" | "failed" =
-            job.status === "done" ? "success" : (job.status as "pending" | "running" | "failed");
+          const mappedStatus: "success" | "pending" | "running" | "failed" | "await_2fa" =
+            job.status === "done" ? "success" : (job.status as "pending" | "running" | "failed" | "await_2fa");
           let recordsSaved: number | null = null;
           if (job.result) {
             try {
@@ -45,7 +45,7 @@ export const scrapeRouter = router({
             error_message: job.error ?? null,
           };
         }),
-        is_running: jobs.some((j) => j.status === "pending" || j.status === "running"),
+        is_running: jobs.some((j) => j.status === "pending" || j.status === "running" || j.status === "await_2fa"),
       };
     }),
 
@@ -55,7 +55,7 @@ export const scrapeRouter = router({
       return {
         jobId: null,
         // フロントが期待する "success" | "failed" | "running" | "pending" | null
-        status: null as "success" | "failed" | "running" | "pending" | null,
+        status: null as "success" | "failed" | "running" | "pending" | "await_2fa" | null,
         attempts: 0,
         // ISO string に変換（JSON シリアライズ・フロント表示用）
         started_at: null as string | null,
@@ -66,8 +66,8 @@ export const scrapeRouter = router({
     }
 
     // DB の "done" → フロントの "success" にマッピング
-    const mappedStatus: "success" | "pending" | "running" | "failed" =
-      job.status === "done" ? "success" : (job.status as "pending" | "running" | "failed");
+    const mappedStatus: "success" | "pending" | "running" | "failed" | "await_2fa" =
+      job.status === "done" ? "success" : (job.status as "pending" | "running" | "failed" | "await_2fa");
 
     // result JSON から records_saved をパースする試み
     let recordsSaved: number | null = null;

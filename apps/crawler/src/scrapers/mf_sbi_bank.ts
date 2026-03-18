@@ -10,7 +10,7 @@ import { db, sqlite } from "@assetbridge/db/client";
 import { AssetsRepo } from "@assetbridge/db/repos/assets";
 import { SnapshotsRepo, DailyTotalsRepo } from "@assetbridge/db/repos/snapshots";
 import { SettingsRepo } from "@assetbridge/db/repos/settings";
-import { crawlerSessions, scrapeEvents, appSettings, creditCardWithdrawals } from "@assetbridge/db/schema";
+import { crawlerSessions, scrapeEvents, appSettings, creditCardWithdrawals, jobQueue } from "@assetbridge/db/schema";
 import { eq } from "drizzle-orm";
 import type { AssetType } from "@assetbridge/types";
 import path from "path";
@@ -68,7 +68,7 @@ function saveCookiesToDb(cookiesJson: string): void {
 }
 
 /** DB から 2FA コードをポーリングして返す（最大 5分） */
-async function poll2faCodeFromDb(timeoutMs = 300_000): Promise<string | null> {
+async function poll2faCodeFromDb(jobId?: number, timeoutMs = 300_000): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const row = db
@@ -81,6 +81,9 @@ async function poll2faCodeFromDb(timeoutMs = 300_000): Promise<string | null> {
         .set({ value: null })
         .where(eq(appSettings.key, "mf_2fa_pending_code"))
         .run();
+      if (jobId !== undefined) {
+        db.update(jobQueue).set({ status: "running" }).where(eq(jobQueue.id, jobId)).run();
+      }
       return row.value;
     }
     await new Promise<void>((r) => setTimeout(r, 10_000));
@@ -92,7 +95,8 @@ async function poll2faCodeFromDb(timeoutMs = 300_000): Promise<string | null> {
 async function runBrowserProcess(
   email: string,
   password: string,
-  cookiesJson: string | undefined
+  cookiesJson: string | undefined,
+  jobId?: number
 ): Promise<{ data: ScrapedData; cookies: unknown[] }> {
   const scraperPath = path.join(__dirname, "browser-scraper.mjs");
 
@@ -139,7 +143,10 @@ async function runBrowserProcess(
 
       if (trimmed === "REQUIRES_2FA") {
         console.log("[crawler] 2FA required, polling DB for code...");
-        const code = await poll2faCodeFromDb();
+        if (jobId !== undefined) {
+          db.update(jobQueue).set({ status: "await_2fa" }).where(eq(jobQueue.id, jobId)).run();
+        }
+        const code = await poll2faCodeFromDb(jobId);
         if (!code) throw new Error("2FA timeout: no code received within 5 minutes");
         const stdin = proc.stdin;
         const encoder = new TextEncoder();
@@ -162,7 +169,7 @@ async function runBrowserProcess(
   throw new Error("Browser process exited without sending DONE or ERROR");
 }
 
-export async function runScrape(): Promise<ScrapedData> {
+export async function runScrape(jobId?: number): Promise<ScrapedData> {
   // DB 優先、なければ env フォールバック
   const email = settingsRepo.get("mf_email") ?? process.env.MF_EMAIL ?? "";
   const password = settingsRepo.get("mf_password") ?? process.env.MF_PASSWORD ?? "";
@@ -173,7 +180,7 @@ export async function runScrape(): Promise<ScrapedData> {
 
   const cookiesJson = loadCookiesFromDb();
 
-  const { data, cookies } = await runBrowserProcess(email, password, cookiesJson);
+  const { data, cookies } = await runBrowserProcess(email, password, cookiesJson, jobId);
 
   // セッション Cookie を DB へ保存
   saveCookiesToDb(JSON.stringify(cookies));

@@ -52,7 +52,7 @@ export async function workerLoop(): Promise<void> {
     );
 
     try {
-      const result = await runScrape();
+      const result = await runScrape(job.id);
       db.update(jobQueue)
         .set({
           status: "done",

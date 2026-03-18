@@ -70,7 +70,7 @@ export default function SettingsPage() {
   const [schedMinute, setSchedMinute] = useState(0);
 
   // --- MF 同期ステータス ---
-  type MfStatus = { status: string | null; started_at: string | null; finished_at: string | null };
+  type MfStatus = { status: "success" | "failed" | "running" | "pending" | "await_2fa" | null; started_at: string | null; finished_at: string | null };
   const [mfStatus, setMfStatus] = useState<MfStatus>({ status: null, started_at: null, finished_at: null });
   const [triggering, setTriggering] = useState(false);
   const [triggerMsg, setTriggerMsg] = useState<{ text: string; ok: boolean } | null>(null);
@@ -81,11 +81,14 @@ export default function SettingsPage() {
     }).catch(() => {});
   }, []);
 
+  const isActiveStatus = mfStatus.status === "running" || mfStatus.status === "pending" || mfStatus.status === "await_2fa";
+  const pollInterval = isActiveStatus ? 3_000 : 15_000;
+
   useEffect(() => {
     fetchMfStatus();
-    const timer = setInterval(fetchMfStatus, 10_000);
+    const timer = setInterval(fetchMfStatus, pollInterval);
     return () => clearInterval(timer);
-  }, [fetchMfStatus]);
+  }, [fetchMfStatus, pollInterval]);
 
   const triggerScrape = async () => {
     setTriggering(true);
@@ -100,6 +103,17 @@ export default function SettingsPage() {
       setTimeout(() => setTriggerMsg(null), 4000);
     } finally {
       setTriggering(false);
+    }
+  };
+
+  const submit2faCode = async () => {
+    if (!twoFaCode.trim()) return;
+    try {
+      await trpc.settings.setMf2faCode.mutate({ code: twoFaCode.trim() });
+      setTwoFaCode("");
+      fetchMfStatus();
+    } catch {
+      setTriggerMsg({ text: "2FAコードの送信に失敗しました", ok: false });
     }
   };
 
@@ -185,17 +199,20 @@ export default function SettingsPage() {
       }
     }
 
-    // 4. 2FA コード（ワンタイム、値がある場合のみ）
-    if (twoFaCode.trim()) {
-      try {
-        await trpc.settings.setMf2faCode.mutate({ code: twoFaCode.trim() });
-        setTwoFaCode("");
-      } catch {
-        errors.push("2FAコード");
-      }
-    }
-
     setSaving(false);
+
+    // MF認証情報が入力されていた場合は自動でスクレイプ開始
+    const hasMfCredentials =
+      secrets["mf_email"].trim() !== "" || secrets["mf_password"].trim() !== "";
+    if (hasMfCredentials && errors.length === 0) {
+      try {
+        await trpc.scrape.trigger.mutate();
+        setTriggerMsg({ text: "認証情報を保存しました。同期を開始します...", ok: true });
+      } catch {
+        // 既に実行中の場合は無視
+      }
+      fetchMfStatus();
+    }
 
     if (errors.length === 0) {
       showMessage("すべての設定を保存しました", true);
@@ -300,24 +317,33 @@ export default function SettingsPage() {
             {mfStatus.status && (
               <span style={{
                 fontSize: 12, padding: "2px 10px", borderRadius: 12, fontWeight: 600,
-                background: mfStatus.status === "success" ? "#14532d" : mfStatus.status === "failed" ? "#450a0a" : "#1e3a5f",
-                color: mfStatus.status === "success" ? "#4ade80" : mfStatus.status === "failed" ? "#f87171" : "#60a5fa",
+                background: mfStatus.status === "success" ? "#14532d"
+                  : mfStatus.status === "failed" ? "#450a0a"
+                  : mfStatus.status === "await_2fa" ? "#1a1500"
+                  : "#1e3a5f",
+                color: mfStatus.status === "success" ? "#4ade80"
+                  : mfStatus.status === "failed" ? "#f87171"
+                  : mfStatus.status === "await_2fa" ? "#eab308"
+                  : "#60a5fa",
               }}>
-                {mfStatus.status === "success" ? "同期済み" : mfStatus.status === "failed" ? "エラー" : "実行中"}
+                {mfStatus.status === "success" ? "同期済み"
+                  : mfStatus.status === "failed" ? "エラー"
+                  : mfStatus.status === "await_2fa" ? "2FA 待ち"
+                  : "実行中"}
               </span>
             )}
             <button
               onClick={triggerScrape}
-              disabled={triggering || mfStatus.status === "running" || mfStatus.status === "pending"}
+              disabled={triggering || mfStatus.status === "running" || mfStatus.status === "pending" || mfStatus.status === "await_2fa"}
               style={{
-                background: triggering || mfStatus.status === "running" ? "#334155" : "#3b82f6",
-                color: triggering || mfStatus.status === "running" ? "#94a3b8" : "white",
+                background: triggering || mfStatus.status === "running" || mfStatus.status === "await_2fa" ? "#334155" : "#3b82f6",
+                color: triggering || mfStatus.status === "running" || mfStatus.status === "await_2fa" ? "#94a3b8" : "white",
                 border: "none", borderRadius: 8, padding: "6px 16px",
                 fontSize: 13, fontWeight: 600,
-                cursor: triggering || mfStatus.status === "running" ? "not-allowed" : "pointer",
+                cursor: triggering || mfStatus.status === "running" || mfStatus.status === "await_2fa" ? "not-allowed" : "pointer",
               }}
             >
-              {triggering ? "開始中..." : mfStatus.status === "running" || mfStatus.status === "pending" ? "実行中..." : "今すぐ同期"}
+              {triggering ? "開始中..." : mfStatus.status === "running" || mfStatus.status === "pending" || mfStatus.status === "await_2fa" ? "実行中..." : "今すぐ同期"}
             </button>
           </div>
         </div>
@@ -382,28 +408,63 @@ export default function SettingsPage() {
               </div>
             );
           })}
-          <div>
-            <label htmlFor="2fa-code" style={labelStyle}>
-              2FA 認証コード（スクレイプ中に必要な場合のみ）
-            </label>
-            <input
-              id="2fa-code"
-              type="text"
-              value={twoFaCode}
-              onChange={(e) => setTwoFaCode(e.target.value)}
-              placeholder="例: 12345678"
-              maxLength={8}
-              aria-label="2FA 認証コード"
-              style={{
-                ...inputStyle,
-                fontSize: 18,
-                letterSpacing: "0.2em",
-                fontFamily: "monospace",
-              }}
-            />
-          </div>
         </div>
       </div>
+
+      {/* --- 2FA 入力セクション（await_2fa 状態のときのみ表示） --- */}
+      {mfStatus.status === "await_2fa" && (
+        <div style={{
+          ...cardStyle,
+          background: "#1a1a00",
+          border: "2px solid #eab308",
+        }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "#eab308" }}>
+            📱 2FA 認証が必要です
+          </h2>
+          <p style={{ ...descStyle, color: "#ca8a04" }}>
+            MoneyForward のログインに 2FA 認証コードが必要です。認証アプリからコードを入力してください。
+          </p>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <label htmlFor="2fa-code-active" style={{ ...labelStyle, color: "#ca8a04" }}>
+                📱 2FA 認証コードを入力してください
+              </label>
+              <input
+                id="2fa-code-active"
+                type="text"
+                value={twoFaCode}
+                onChange={(e) => setTwoFaCode(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") submit2faCode(); }}
+                placeholder="例: 123456"
+                maxLength={8}
+                aria-label="2FA 認証コード"
+                style={{
+                  ...inputStyle,
+                  fontSize: 20,
+                  letterSpacing: "0.3em",
+                  fontFamily: "monospace",
+                  border: "1px solid #eab308",
+                  background: "#111100",
+                }}
+              />
+            </div>
+            <button
+              onClick={submit2faCode}
+              disabled={!twoFaCode.trim()}
+              style={{
+                background: twoFaCode.trim() ? "#eab308" : "#4b4b00",
+                color: twoFaCode.trim() ? "#000" : "#6b6b00",
+                border: "none", borderRadius: 8, padding: "10px 24px",
+                fontSize: 14, fontWeight: 700,
+                cursor: twoFaCode.trim() ? "pointer" : "not-allowed",
+                whiteSpace: "nowrap",
+              }}
+            >
+              コードを送信
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* --- 3. Discord 設定 --- */}
       <div style={cardStyle}>
