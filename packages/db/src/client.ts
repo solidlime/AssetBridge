@@ -1,3 +1,4 @@
+/// <reference types="bun-types" />
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import path from "path";

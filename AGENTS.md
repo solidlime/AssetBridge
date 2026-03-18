@@ -11,13 +11,13 @@
 
 | サービス | 場所 | Port |
 |---------|------|------|
-| FastAPI（REST API） | apps/api | 8000 |
+| Hono + tRPC（REST API） | apps/api | 8000 |
 | MCP サーバ（Streamable HTTP） | apps/mcp | 8001 |
 | Playwright スクレイパー | apps/crawler | - |
 | Discord Bot | apps/discord-bot | - |
 | Next.js ダッシュボード | apps/web | 3000 |
 
-データストア: `data/assetbridge.db`（SQLite）
+データストア: `data/assetbridge_v2.db`（SQLite）
 
 ## 3. Memory & Handoff Instructions
 

@@ -1,9 +1,11 @@
+const BUN = process.env.BUN_PATH ?? "bun";
+
 module.exports = {
   apps: [
     {
       name: "api",
       script: "apps/api/src/index.ts",
-      interpreter: "bun",
+      interpreter: BUN,
       env: {
         PORT: 8000,
         NODE_ENV: "production",
@@ -15,7 +17,7 @@ module.exports = {
     {
       name: "mcp",
       script: "apps/mcp/src/index.ts",
-      interpreter: "bun",
+      interpreter: BUN,
       env: {
         PORT: 8001,
         NODE_ENV: "production",
@@ -25,12 +27,15 @@ module.exports = {
     },
     {
       name: "web",
-      script: "bun",
-      args: "run start",
+      script: "node_modules/next/dist/bin/next",
+      args: "start",
       cwd: "apps/web",
+      interpreter: "node",
       env: {
         NODE_ENV: "production",
         PORT: 3000,
+        API_KEY: "test",
+        API_URL: "http://localhost:8000",
       },
       log_file: "logs/web.log",
       error_file: "logs/web.error.log",
@@ -38,7 +43,7 @@ module.exports = {
     {
       name: "worker",
       script: "apps/crawler/src/index.ts",
-      interpreter: "bun",
+      interpreter: BUN,
       env: {
         NODE_ENV: "production",
       },
@@ -49,7 +54,7 @@ module.exports = {
     {
       name: "discord",
       script: "apps/discord-bot/src/index.ts",
-      interpreter: "bun",
+      interpreter: BUN,
       autorestart: false,
       env: {
         NODE_ENV: "production",

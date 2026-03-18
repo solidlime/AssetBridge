@@ -1,58 +1,54 @@
 # MEMORY
 
 ## プロジェクト概要
-AssetBridge — MF for 住信SBI銀行スクレイパー + FastAPI + MCP + Discord Bot + Next.js ダッシュボード
+AssetBridge — MF for 住信SBI銀行スクレイパー + Hono/tRPC API + MCP + Discord Bot + Next.js ダッシュボード
 
-## 学習した知識・教訓
+## 技術スタック（2026-03時点）
+- **ランタイム**: Bun (apps/api, apps/mcp, apps/crawler, apps/discord-bot) + Node.js (apps/web)
+- **API**: Hono + tRPC (apps/api, port 8000)
+- **MCP サーバ**: Hono + tRPC クライアント (apps/mcp, port 8001)
+- **スクレイパー**: Playwright (apps/crawler)
+- **Discord Bot**: discord.js (apps/discord-bot)
+- **Web**: Next.js 15 (apps/web, port 3000)
+- **DB**: SQLite + Drizzle ORM (packages/db)
+- **パッケージマネージャ**: pnpm (monorepo)
+- **ビルドシステム**: Turborepo
 
-### プロジェクト構造
-- Monorepo: pnpm workspace + Turborepo
-- Python apps: apps/api, apps/crawler, apps/mcp, apps/discord-bot
-- Web: apps/web (Next.js 15)
-- 共有型定義: packages/types/src/index.ts
+## 重要ファイルパス
+- DB: `data/assetbridge_v2.db` (root レベル)
+- DB スキーマ: `packages/db/src/schema/`
+- DB リポジトリ: `packages/db/src/repos/`
+- API ルーター: `apps/api/src/router/`
+- API サービス: `apps/api/src/services/`
+- スクレイパー: `apps/crawler/src/scrapers/mf_sbi_bank.ts`
+- MCP ツール: `apps/mcp/src/tools/`
+- PM2 設定: `ecosystem.config.cjs`
+- DB マイグレーション設定: `packages/db/drizzle.config.ts`
 
-### 重要ファイルパス
-- DB: data/assetbridge.db
-- 設定: apps/api/src/config/settings.py
-- スクレイパー: apps/crawler/src/scrapers/mf_sbi_bank.py
-- MCP サーバ: apps/mcp/src/server.py（port 8001）
-- FastAPI: apps/api/src/main.py（port 8000）
-- 起動スクリプト: scripts/setup.ps1 (Windows), scripts/setup.sh (Linux/Mac)
-- 停止スクリプト: scripts/stop.sh
+## セットアップ手順
+1. `.env` を `.env.example` から作成
+2. `pnpm install`
+3. `playwright install chromium`
+4. `pnpm db:migrate`
+5. `pm2 start ecosystem.config.cjs`
 
-### セットアップ手順
-1. .env を .env.example から作成
-2. `playwright install chromium`
-3. `python scripts/setup_db.py`
-4. `python scripts/test_login.py` で疎通確認
-5. Windows: `.\scripts\setup.ps1` / Linux: `bash scripts/setup.sh`
+## Windows 固有の注意事項
 
-### Windows 固有の注意事項
-
-#### Invoke-WebRequest はプロキシでタイムアウトする
+### Invoke-WebRequest はプロキシでタイムアウトする
 Windows 環境では `Invoke-WebRequest` を localhost に対して使うとプロキシ設定の影響でタイムアウトする。
 代わりに以下を使うこと:
 - `curl.exe -s -o NUL -w "%{http_code}" --noproxy "*" URL` (ステータスコードのみ取得)
-- `[System.Net.WebClient]` + `.Proxy = $null` (プロキシを明示的に無効化)
 - Windows では `/dev/null` ではなく `NUL` を使う（`-o NUL`）
 
-#### Start-Process での環境変数
-- `$env:PYTHONPATH = $ProjectRoot` をセットすれば Start-Process の子プロセスに自動継承される
-- `-EnvironmentVariable` パラメータは不要（$env: 変数が継承される）
+### ecosystem.config.cjs の BUN パス
+- `process.env.BUN_PATH ?? "bun"` を使用。`BUN_PATH` 環境変数で bun の絶対パスを上書き可能
 
-#### .env のインラインコメント
-- `API_KEY=test   # コメント` のような値は pydantic-settings が自動除去する
-- PowerShell での .env パース時は `($raw -split '\s+#')[0].Trim()` で除去が必要
-
-### API キー
-- X-API-Key 認証: `~/.assetbridge/.env` の `API_KEY` 値（現在 `test`）
-- pydantic-settings の `default_factory=lambda: secrets.token_urlsafe(32)` は .env 未設定時のみ発動
-
-### 実装済み機能
-- FastAPI 全エンドポイント (port 8000)
+## 実装済み機能
+- Hono + tRPC 全エンドポイント (port 8000)
 - Next.js ダッシュボード (port 3000)
-- Playwright スクレイパー (mf_sbi_bank.py)
-- AIコメント生成 (LiteLLM + OpenRouter)
-- 配当ページ (yfinance)
+- Playwright スクレイパー (mf_sbi_bank.ts)
+- 配当ページ (yahoo-finance2)
 - モンテカルロシミュレーター
-- デモデータシード: scripts/seed_demo_data.py
+- MCP サーバ (port 8001)
+- Discord Bot
+- ジョブキュー (packages/db/src/repos/job-queue.ts)

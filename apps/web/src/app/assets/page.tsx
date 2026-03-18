@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 import { formatJpy, formatPct, diffColor } from "@/lib/format";
@@ -10,17 +10,17 @@ import { formatJpy, formatPct, diffColor } from "@/lib/format";
 // ---------------------------------------------------------------------------
 
 type Holding = {
-  assetId: number;
   symbol: string;
   name: string;
   quantity: number;
   valueJpy: number;
-  currentPrice: number;
+  priceJpy: number;
   costBasisJpy: number;
   costPerUnitJpy: number;
   unrealizedPnlJpy: number;
   unrealizedPnlPct: number;
   assetType: string;
+  portfolioWeightPct: number;
 };
 
 type SortKey = "name" | "quantity" | "valueJpy" | "unrealizedPnlJpy" | "unrealizedPnlPct";
@@ -35,9 +35,9 @@ const TYPES = [
   { value: "stock_jp", label: "日本株" },
   { value: "stock_us", label: "米国株" },
   { value: "fund", label: "投信" },
-  { value: "crypto", label: "暗号資産" },
   { value: "cash", label: "現金" },
   { value: "pension", label: "年金" },
+  { value: "point", label: "ポイント" },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ function AssetModal({ holding, onClose }: ModalProps) {
           {[
             { label: "評価額", value: formatJpy(holding.valueJpy) },
             { label: "数量", value: String(holding.quantity) },
-            { label: "現在価格", value: formatJpy(holding.currentPrice) },
+            { label: "現在価格", value: formatJpy(holding.priceJpy) },
             { label: "取得単価", value: formatJpy(holding.costPerUnitJpy) },
             { label: "含み損益", value: `${pnlSign}${formatJpy(Math.abs(holding.unrealizedPnlJpy))}`, color: pnlColor },
             { label: "損益率", value: `${pnlSign}${holding.unrealizedPnlPct.toFixed(2)}%`, color: pnlColor },
@@ -192,7 +192,7 @@ function AssetModal({ holding, onClose }: ModalProps) {
 // メインページ
 // ---------------------------------------------------------------------------
 
-export default function AssetsPage() {
+function AssetsPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -217,10 +217,25 @@ export default function AssetsPage() {
     let cancelled = false;
     setLoading(true);
     trpc.portfolio.holdings
-      .query({ assetType: activeType === "all" ? undefined : activeType })
+      .query({ assetType: activeType as "all" | "stock_jp" | "stock_us" | "fund" | "cash" | "pension" | "point" })
       .then((data) => {
         if (!cancelled) {
-          setHoldings(Array.isArray(data) ? (data as Holding[]) : []);
+          const mapped: Holding[] = Array.isArray(data)
+            ? data.map((item) => ({
+                symbol: item.symbol,
+                name: item.name,
+                quantity: item.quantity,
+                valueJpy: item.valueJpy,
+                priceJpy: item.priceJpy,
+                costBasisJpy: item.costBasisJpy,
+                costPerUnitJpy: item.costPerUnitJpy,
+                unrealizedPnlJpy: item.unrealizedPnlJpy,
+                unrealizedPnlPct: item.unrealizedPnlPct,
+                assetType: item.assetType,
+                portfolioWeightPct: item.portfolioWeightPct,
+              }))
+            : [];
+          setHoldings(mapped);
           setLoading(false);
         }
       })
@@ -356,7 +371,7 @@ export default function AssetsPage() {
                 const pnlSign = h.unrealizedPnlJpy >= 0 ? "+" : "";
                 return (
                   <tr
-                    key={h.assetId}
+                    key={`${h.symbol}-${h.name}`}
                     onClick={() => setSelectedHolding(h)}
                     tabIndex={0}
                     role="button"
@@ -411,5 +426,13 @@ export default function AssetsPage() {
         <AssetModal holding={selectedHolding} onClose={() => setSelectedHolding(null)} />
       )}
     </div>
+  );
+}
+
+export default function AssetsPage() {
+  return (
+    <Suspense fallback={<div style={{ color: "#94a3b8", padding: 32 }}>読み込み中...</div>}>
+      <AssetsPageInner />
+    </Suspense>
   );
 }

@@ -27,12 +27,14 @@ out/
 
 # Data (secrets / large files)
 data/assetbridge.db
+data/assetbridge_v2.db
+data/assetbridge_v2.db-shm
+data/assetbridge_v2.db-wal
 data/sessions/
 data/screenshots/
 data/.encryption_key
 data/*.png
 data/*.jpg
-apps/api/data/
 !data/.gitkeep
 !data/sessions/.gitkeep
 

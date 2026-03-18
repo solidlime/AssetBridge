@@ -21,6 +21,13 @@ export class JobQueueRepo {
       .get() ?? undefined;
   }
 
+  getLogs(limit = 20): (typeof jobQueue.$inferSelect)[] {
+    return this.db.select().from(jobQueue)
+      .orderBy(desc(jobQueue.id))
+      .limit(limit)
+      .all();
+  }
+
   updateStatus(id: number, status: string, extra?: { result?: string; error?: string }): void {
     this.db.update(jobQueue)
       .set({

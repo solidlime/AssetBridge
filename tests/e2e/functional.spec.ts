@@ -108,9 +108,24 @@ test.describe("認証付き tRPC API テスト", () => {
     expect(Array.isArray(data)).toBe(true);
   });
 
-  test("認証ヘッダーなしは 401 を返す", async ({ request }) => {
-    const res = await request.get(`${API_BASE}/trpc/portfolio.snapshot?input=%7B%7D`);
-    expect(res.status()).toBe(401);
+  test("APIキー設定済みの場合、認証ヘッダーなしは 401 を返す", async ({ request }) => {
+    // テスト用に一時的に web_api_key を設定
+    const setRes = await request.post(`${API_BASE}/trpc/settings.setSecret`, {
+      headers: API_HEADERS,
+      data: { key: "web_api_key", value: API_KEY },
+    });
+    expect(setRes.status()).toBe(200);
+
+    try {
+      const res = await request.get(`${API_BASE}/trpc/portfolio.snapshot?input=%7B%7D`);
+      expect(res.status()).toBe(401);
+    } finally {
+      // テスト後にAPIキーをクリア（他テストに影響しないよう）
+      await request.post(`${API_BASE}/trpc/settings.setSecret`, {
+        headers: API_HEADERS,
+        data: { key: "web_api_key", value: "" },
+      });
+    }
   });
 });
 

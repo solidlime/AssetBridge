@@ -77,7 +77,7 @@ bun scripts/migrate.ts
 ### 5. 全サービス起動
 
 ```bash
-pm2 start ecosystem.config.ts
+pm2 start ecosystem.config.cjs
 pm2 status
 ```
 
@@ -94,7 +94,7 @@ pm2 status
 
 ```bash
 # 全サービス起動
-pm2 start ecosystem.config.ts
+pm2 start ecosystem.config.cjs
 
 # 個別起動
 pm2 start "api"
@@ -263,9 +263,10 @@ AssetBridge/
 ├── apps/
 │   ├── api/                    # Hono.js + tRPC API (port 8000)
 │   │   ├── src/
-│   │   │   ├── index.ts        # Hono + tRPC ルーター
-│   │   │   ├── routes/         # tRPC ルーターの個別ファイル
-│   │   │   ├── lib/            # ユーティリティ関数
+│   │   │   ├── index.ts        # Hono + tRPC エントリーポイント
+│   │   │   ├── router/         # tRPC ルーター（portfolio / settings / scrape 等）
+│   │   │   ├── services/       # ビジネスロジック
+│   │   │   ├── lib/            # キャッシュ等ユーティリティ
 │   │   │   └── middleware/     # 認証・エラーハンドリング
 │   │   └── package.json
 │   │
@@ -277,7 +278,7 @@ AssetBridge/
 │   │   │   └── session-manager.ts
 │   │   └── package.json
 │   │
-│   ├── mcp/                    # MCP サーバー (stdio)
+│   ├── mcp/                    # MCP サーバー (Streamable HTTP, port 8001)
 │   │   ├── src/
 │   │   │   └── index.ts        # MCP tool 定義
 │   │   └── package.json
@@ -296,27 +297,36 @@ AssetBridge/
 │
 ├── packages/
 │   ├── db/                     # Drizzle スキーマ + bun:sqlite
-│   │   ├── schema.ts           # テーブル定義
-│   │   └── index.ts            # DB インスタンス
+│   │   ├── src/
+│   │   │   ├── schema/         # テーブル定義
+│   │   │   ├── repos/          # Repository パターン実装
+│   │   │   └── client.ts       # DB インスタンス
+│   │   ├── drizzle/            # マイグレーション SQL
+│   │   ├── drizzle.config.ts   # Drizzle Kit 設定
+│   │   └── package.json
 │   │
 │   └── types/                  # 共有型定義
 │       └── index.ts
 │
 ├── scripts/
-│   ├── migrate.ts              # DB マイグレーション
+│   ├── migrate.ts              # DB マイグレーション（bun:sqlite 直接実行）
+│   ├── start.sh                # PM2 起動スクリプト
 │   └── stop.sh                 # PM2 停止スクリプト
 │
 ├── data/
 │   └── assetbridge_v2.db       # SQLite (WAL モード、Git 管理外)
 │
-├── .claude/
-│   └── skills/                 # Claude Code スキルファイル (5個)
+├── logs/                       # PM2 ログ出力先（Git 管理外）
 │
-├── ecosystem.config.ts         # PM2 全サービス定義
-├── drizzle.config.ts           # Drizzle 設定
+├── tests/
+│   └── e2e/                    # Playwright E2E テスト
+│
+├── .agent/                     # AI エージェント用メモリ・ハンドオフ
+├── ecosystem.config.cjs        # PM2 全サービス定義
 ├── package.json                # pnpm workspace root
 ├── pnpm-workspace.yaml
-└── turbo.json                  # Turborepo パイプライン
+├── turbo.json                  # Turborepo パイプライン
+└── playwright.config.ts        # E2E テスト設定
 
 # 環境変数ファイル（プロジェクト外）
 ~/.assetbridge/.env            # 認証情報・APIキー
@@ -465,4 +475,4 @@ MIT
 
 ---
 
-**最終更新**: 2026-03-15
+**最終更新**: 2026-03-19

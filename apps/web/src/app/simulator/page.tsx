@@ -2,21 +2,23 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import SimulatorChart from "@/components/charts/SimulatorChart";
+import { formatJpy } from "@/lib/format";
 
 export default function SimulatorPage() {
   const [params, setParams] = useState({
-    initial_amount: 1000000,
-    monthly_investment: 50000,
+    initial: 1000000,
+    monthly: 50000,
     years: 20,
-    expected_return: 0.05,
+    returnRate: 0.05,
     volatility: 0.15,
+    simulations: 1000,
   });
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
-  // API レスポンスの year_labels + percentiles を SimulatorChart 用の配列に変換
+  // API レスポンスの yearLabels + percentiles を SimulatorChart 用の配列に変換
   const chartData = result
-    ? (result.year_labels ?? []).map((year: number, i: number) => ({
+    ? (result.yearLabels ?? []).map((year: number, i: number) => ({
         year,
         p10: result.percentiles?.p10?.[i] ?? 0,
         p25: result.percentiles?.p25?.[i] ?? 0,
@@ -58,10 +60,10 @@ export default function SimulatorPage() {
       <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
           {[
-            { key: "initial_amount", label: "初期資産 (¥)", step: 100000 },
-            { key: "monthly_investment", label: "月次投資額 (¥)", step: 10000 },
+            { key: "initial", label: "初期資産 (¥)", step: 100000 },
+            { key: "monthly", label: "月次投資額 (¥)", step: 10000 },
             { key: "years", label: "運用年数", step: 1, min: 1, max: 50 },
-            { key: "expected_return", label: "期待リターン (%)", step: 0.01, factor: 100 },
+            { key: "returnRate", label: "期待リターン (%)", step: 0.01, factor: 100 },
             { key: "volatility", label: "ボラティリティ (%)", step: 0.01, factor: 100 },
           ].map(({ key, label, step, min, max, factor }) => (
             <div key={key}>
@@ -113,16 +115,18 @@ export default function SimulatorPage() {
           {/* パーセンタイル推移グラフ */}
           {chartData.length > 0 && (
             <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
-              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{result.years}年間の資産推移シミュレーション</h2>
+              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{params.years}年間の資産推移シミュレーション</h2>
               <SimulatorChart data={chartData} />
             </div>
           )}
 
-          {/* 最終値サマリー */}
+          {/* 最終値サマリー：percentiles の最終インデックスから導出 */}
           <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{result.years}年後の試算結果</h2>
+            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>{params.years}年後の試算結果</h2>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
-              {Object.entries(result.final_values || {}).map(([key, value]) => {
+              {(["p10", "p25", "p50", "p75", "p90"] as const).map((key) => {
+                const arr = result.percentiles?.[key] as number[] | undefined;
+                const value = arr ? arr[arr.length - 1] ?? 0 : 0;
                 const labels: Record<string, string> = {
                   p10: "悲観的(10%)",
                   p25: "やや悲観(25%)",
@@ -141,7 +145,7 @@ export default function SimulatorPage() {
                   <div key={key} style={{ background: "#0f172a", borderRadius: 8, padding: 16, textAlign: "center" }}>
                     <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 8 }}>{labels[key] || key}</div>
                     <div style={{ fontSize: 16, fontWeight: 700, color: colors[key] || "white" }}>
-                      ¥{((value as number) / 1e6).toFixed(1)}M
+                      {formatJpy(value)}
                     </div>
                   </div>
                 );

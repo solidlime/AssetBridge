@@ -1,4 +1,29 @@
+/// <reference types="bun-types" />
 import type { Database } from "bun:sqlite";
+
+export const SECRET_SETTING_KEYS = [
+  "mf_email",
+  "mf_password",
+  "discord_token",
+  "web_api_key",
+] as const satisfies readonly [string, ...string[]];
+
+export type SecretSettingKey = typeof SECRET_SETTING_KEYS[number];
+
+function maskSecret(value: string): string {
+  if (value.length <= 12) return "***";
+  return value.slice(0, 8) + "****..****" + value.slice(-4);
+}
+
+function maskEmail(value: string): string {
+  const atIdx = value.indexOf("@");
+  if (atIdx < 0) return maskSecret(value);
+  const local = value.slice(0, atIdx);
+  const domain = value.slice(atIdx + 1);
+  const maskedLocal = local.length <= 2 ? "***" : local.slice(0, 2) + "****...****";
+  const maskedDomain = domain.length === 0 ? "***" : domain.slice(0, 1) + "**";
+  return `${maskedLocal}@${maskedDomain}`;
+}
 
 export class SettingsRepo {
   constructor(private sqlite: Database) {}
@@ -23,5 +48,32 @@ export class SettingsRepo {
   setScrapeSchedule(hour: number, minute: number): void {
     this.set("scrape_hour", String(hour));
     this.set("scrape_minute", String(minute));
+  }
+
+  setSecret(key: SecretSettingKey, value: string): void {
+    this.set(key, value);
+  }
+
+  getSecretStatus(key: SecretSettingKey): { isSet: boolean; masked: string | null } {
+    const val = this.get(key);
+    if (!val) return { isSet: false, masked: null };
+    const masked = key === "mf_email" ? maskEmail(val) : maskSecret(val);
+    return { isSet: true, masked };
+  }
+
+  getAllSettings(): {
+    discordChannelId: string;
+    scrapeSchedule: { hour: number; minute: number };
+    secrets: Record<SecretSettingKey, { isSet: boolean; masked: string | null }>;
+  } {
+    const secrets = {} as Record<SecretSettingKey, { isSet: boolean; masked: string | null }>;
+    for (const key of SECRET_SETTING_KEYS) {
+      secrets[key] = this.getSecretStatus(key);
+    }
+    return {
+      discordChannelId: this.get("discord_channel_id") ?? "",
+      scrapeSchedule: this.getScrapeSchedule(),
+      secrets,
+    };
   }
 }

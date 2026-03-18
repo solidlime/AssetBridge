@@ -11,6 +11,7 @@
     "discord.js": "^14.0.0",
     "@trpc/client": "^11.0.0",
     "node-cron": "^3.0.0",
+    "@assetbridge/api": "workspace:*",
     "@assetbridge/types": "workspace:*",
     "dotenv": "^16.0.0"
   },

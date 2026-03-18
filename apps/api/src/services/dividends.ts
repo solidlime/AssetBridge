@@ -7,31 +7,47 @@ interface YfDividendData {
   nextExDate?: string;
 }
 
-async function fetchDividendData(symbol: string, assetType: string): Promise<YfDividendData> {
+// インスタンスをモジュールレベルでキャッシュ（crumb/cookie を1回だけ取得）
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _yfInstance: any = null;
+async function getYf() {
+  if (!_yfInstance) {
+    const YahooFinance = await import("yahoo-finance2");
+    _yfInstance = new YahooFinance.default();
+  }
+  return _yfInstance;
+}
+
+async function fetchDividendData(symbol: string, _assetType: string): Promise<YfDividendData> {
   try {
-    const yf = await import("yahoo-finance2");
-    // 日本株は 4〜5桁数字 → "{symbol}.T" 形式に変換
+    const yf = await getYf();
+
+    // 日本株/ETF は 4〜5桁数字 → "{symbol}.T" 形式に変換
     const yfSymbol = /^\d{4,5}$/.test(symbol) ? `${symbol}.T` : symbol;
 
-    const quoteSummary = await (
-      yf.default as unknown as {
-        quoteSummary: (
-          s: string,
-          opts: { modules: string[] }
-        ) => Promise<{
-          summaryDetail?: { dividendYield?: number };
-          calendarEvents?: { exDividendDate?: number };
-        }>;
-      }
-    ).quoteSummary(yfSymbol, { modules: ["summaryDetail", "calendarEvents"] });
+    // 10秒タイムアウト付きで quoteSummary を実行
+    const quoteSummary = await Promise.race([
+      yf.quoteSummary(yfSymbol, { modules: ["summaryDetail", "calendarEvents"] }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`timeout: ${yfSymbol}`)), 10000)
+      ),
+    ]);
 
     const detail = quoteSummary?.summaryDetail;
     const calendar = quoteSummary?.calendarEvents;
 
+    // ETF は summaryDetail.yield に入る場合があるため3段階フォールバック
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawYield: number =
+      detail?.dividendYield ||
+      detail?.trailingAnnualDividendYield ||
+      (detail as any)?.yield ||
+      0;
+
     return {
-      yieldPct: (detail?.dividendYield ?? 0) * 100,
+      yieldPct: rawYield * 100,
       nextExDate: calendar?.exDividendDate
-        ? new Date(calendar.exDividendDate * 1000).toISOString().split("T")[0]
+        ? new Date(calendar.exDividendDate).toISOString().split("T")[0]
         : undefined,
     };
   } catch {
@@ -57,8 +73,8 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
     })
   );
 
+  // yieldPct が 0 の銘柄も含めて表示（Yahoo Finance 取得失敗時でも銘柄一覧を表示する）
   const holdingsResult: DividendHolding[] = dividendData
-    .filter((h) => h.yieldPct > 0)
     .map((h) => ({
       symbol: h.symbol,
       name: h.name,
@@ -76,8 +92,13 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
   // 月別分布は簡易均等配分
   const monthlyBreakdown = Array(12).fill(totalAnnualEstJpy / 12) as number[];
 
+  // 30日以上前の過去日付は除外（Yahoo Finance のスタールデータを除去）
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 30);
+  const cutoffStr = cutoff.toISOString().split("T")[0];
+
   const nextExDividendDates = holdingsResult
-    .filter((h): h is DividendHolding & { nextExDate: string } => !!h.nextExDate)
+    .filter((h): h is DividendHolding & { nextExDate: string } => !!h.nextExDate && h.nextExDate >= cutoffStr)
     .map((h) => ({ symbol: h.symbol, date: h.nextExDate }))
     .sort((a, b) => a.date.localeCompare(b.date));
 

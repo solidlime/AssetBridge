@@ -6,6 +6,7 @@ import { dividendsRouter } from "./dividends";
 import { scrapeRouter } from "./scrape";
 import { simulatorRouter } from "./simulator";
 import { settingsRouter } from "./settings";
+import { incomeExpenseRouter } from "./income_expense";
 
 export const appRouter = router({
   portfolio: portfolioRouter,
@@ -15,6 +16,7 @@ export const appRouter = router({
   scrape: scrapeRouter,
   simulator: simulatorRouter,
   settings: settingsRouter,
+  incomeExpense: incomeExpenseRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -31,13 +31,21 @@ export async function getSnapshot(date?: string): Promise<PortfolioSnapshot> {
 
   // 投資系のみ gainers/losers 対象
   const investmentHoldings = holdings.filter(
-    (h) => h.valueJpy > 0 && h.assetType !== "CASH" && h.assetType !== "PENSION"
+    (h) => h.valueJpy > 0 && h.assetType !== "CASH" && h.assetType !== "PENSION" && h.assetType !== "POINT"
   );
-  const sorted = [...investmentHoldings].sort(
-    (a, b) => b.unrealizedPnlPct - a.unrealizedPnlPct
+  // unrealizedPnlPct が全て 0 の場合は unrealizedPnlJpy の絶対値でフォールバックソート
+  const allPctZero = investmentHoldings.every((h) => h.unrealizedPnlPct === 0);
+  const sorted = [...investmentHoldings].sort((a, b) =>
+    allPctZero
+      ? b.unrealizedPnlJpy - a.unrealizedPnlJpy
+      : b.unrealizedPnlPct - a.unrealizedPnlPct
   );
-  const topGainers = sorted.slice(0, 5).filter((h) => h.unrealizedPnlPct > 0);
-  const topLosers = [...sorted].reverse().slice(0, 5).filter((h) => h.unrealizedPnlPct < 0);
+  const topGainers = sorted.slice(0, 5).filter((h) =>
+    allPctZero ? h.unrealizedPnlJpy > 0 : h.unrealizedPnlPct > 0
+  );
+  const topLosers = [...sorted].reverse().slice(0, 5).filter((h) =>
+    allPctZero ? h.unrealizedPnlJpy < 0 : h.unrealizedPnlPct < 0
+  );
 
   const breakdown = {
     stockJpJpy: latestTotalRow?.stockJpJpy ?? 0,

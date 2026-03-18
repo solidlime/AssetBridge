@@ -20,7 +20,7 @@
     "@assetbridge/db": "workspace:*",
     "@assetbridge/types": "workspace:*",
     "drizzle-orm": "^0.38.0",
-    "yahoo-finance2": "^2.11.0",
+    "yahoo-finance2": "^3.13.2",
     "dotenv": "^16.0.0"
   },
   "devDependencies": {

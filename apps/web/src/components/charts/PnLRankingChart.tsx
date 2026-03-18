@@ -11,7 +11,7 @@ import {
 } from "recharts";
 
 interface RankingItem {
-  asset_id: number;
+  asset_id: number | string;
   name: string;
   unrealized_pnl_jpy: number;
   unrealized_pnl_pct: number;

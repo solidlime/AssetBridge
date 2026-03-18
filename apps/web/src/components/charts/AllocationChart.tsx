@@ -9,9 +9,9 @@ import {
 
 interface Allocation {
   asset_type: string;
-  name: string;
+  name?: string;
   value_jpy: number;
-  percentage: number;
+  percentage?: number;
 }
 
 interface Props {
@@ -70,7 +70,7 @@ export default function AllocationChart({ allocations, totalJpy }: Props) {
         {allocations.map((a, i) => (
           <div key={a.asset_type} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
             <div style={{ width: 10, height: 10, borderRadius: 2, background: COLORS[i % COLORS.length] }} />
-            <span style={{ color: "#94a3b8" }}>{a.name} {a.percentage.toFixed(1)}%</span>
+            <span style={{ color: "#94a3b8" }}>{a.name ?? a.asset_type} {(a.percentage ?? 0).toFixed(1)}%</span>
           </div>
         ))}
       </div>

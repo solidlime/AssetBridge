@@ -1,148 +1,25 @@
-import { chromium, type BrowserContext, type Page } from "playwright";
-import { db } from "@assetbridge/db/client";
+/**
+ * mf_sbi_bank.ts — Bun ランタイムで動作するスクレイプ調整レイヤー
+ *
+ * Playwright は Bun の pipe サポートと非互換のため、ブラウザ操作は
+ * Node.js サブプロセス (browser-scraper.mjs) に委譲する。
+ * このファイルは bun:sqlite を使った DB 操作のみ担当する。
+ */
+
+import { db, sqlite } from "@assetbridge/db/client";
 import { AssetsRepo } from "@assetbridge/db/repos/assets";
 import { SnapshotsRepo, DailyTotalsRepo } from "@assetbridge/db/repos/snapshots";
-import { crawlerSessions, scrapeEvents, appSettings } from "@assetbridge/db/schema";
+import { SettingsRepo } from "@assetbridge/db/repos/settings";
+import { crawlerSessions, scrapeEvents, appSettings, creditCardWithdrawals } from "@assetbridge/db/schema";
 import { eq } from "drizzle-orm";
 import type { AssetType } from "@assetbridge/types";
-import { loadEnv } from "../env";
+import path from "path";
+import { fileURLToPath } from "url";
 
-loadEnv();
+const settingsRepo = new SettingsRepo(sqlite);
 
-const BASE_URL = "https://ssnb.x.moneyforward.com";
-
-// MF カテゴリ名 → AssetType マッピング
-const CATEGORY_MAP: Record<string, AssetType> = {
-  "預金・現金・暗号資産": "CASH",
-  "株式（現物）": "STOCK_JP",
-  "投資信託": "FUND",
-  "年金": "PENSION",
-  "ポイント・マイル": "POINT",
-};
-
-// 銘柄コードのパターンから AssetType を推定する
-function detectAssetType(symbol: string): AssetType {
-  if (!symbol) return "CASH";
-  if (/^\d{4,5}$/.test(symbol)) return "STOCK_JP";
-  if (/^[A-Z]{1,6}$/.test(symbol)) return "STOCK_US";
-  if (/[A-Z0-9]{6,}/.test(symbol)) return "FUND";
-  return "CASH";
-}
-
-// "1,234,567円" や "1234567" → number
-function parseAmount(text: string): number {
-  const match = text.replace(/,/g, "").match(/[\d.]+/);
-  return match ? parseFloat(match[0]) : 0;
-}
-
-async function saveSession(contextArg: BrowserContext): Promise<void> {
-  const cookies = await contextArg.cookies();
-  db
-    .insert(crawlerSessions)
-    .values({
-      name: "mf_sbi_bank",
-      cookiesJson: JSON.stringify(cookies),
-      savedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: crawlerSessions.name,
-      set: { cookiesJson: JSON.stringify(cookies), savedAt: new Date() },
-    })
-    .run();
-}
-
-async function loadSession(contextArg: BrowserContext): Promise<boolean> {
-  const row = db
-    .select()
-    .from(crawlerSessions)
-    .where(eq(crawlerSessions.name, "mf_sbi_bank"))
-    .get();
-  if (!row) return false;
-
-  // JSON.parse 後に型ガードを挟み、不正なフォーマットで addCookies がクラッシュするのを防ぐ
-  const parsed = JSON.parse(row.cookiesJson);
-  if (!Array.isArray(parsed)) {
-    console.error("[crawler] Invalid cookie format in DB, skipping session restore");
-    return false;
-  }
-  const cookies = parsed.filter((c: unknown) =>
-    c !== null &&
-    typeof c === "object" &&
-    "name" in (c as Record<string, unknown>) &&
-    "value" in (c as Record<string, unknown>)
-  ) as Parameters<BrowserContext["addCookies"]>[0];
-  if (cookies.length === 0) {
-    console.error("[crawler] No valid cookies found, skipping session restore");
-    return false;
-  }
-
-  await contextArg.addCookies(cookies);
-  return true;
-}
-
-// APIサーバーが mf_2fa_pending_code に書き込んだ 2FA コードを待機・取得する
-async function get2faCode(timeoutMs = 300_000): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const row = db
-      .select({ value: appSettings.value })
-      .from(appSettings)
-      .where(eq(appSettings.key, "mf_2fa_pending_code"))
-      .get();
-    if (row?.value) {
-      // 読み取り後にクリアして再利用を防ぐ
-      db.update(appSettings)
-        .set({ value: null })
-        .where(eq(appSettings.key, "mf_2fa_pending_code"))
-        .run();
-      return row.value;
-    }
-    // 2FAコードはメール到着に時間がかかるため 10秒間隔でポーリングする
-    await new Promise<void>((r) => setTimeout(r, 10_000));
-  }
-  return null;
-}
-
-async function login(page: Page): Promise<void> {
-  const email = process.env.MF_EMAIL ?? "";
-  const password = process.env.MF_PASSWORD ?? "";
-
-  await page.goto(`${BASE_URL}/users/sign_in`, { waitUntil: "networkidle" });
-  await page.fill('input[name="sign_in_session_service[email]"]', email);
-  await page.fill('input[name="sign_in_session_service[password]"]', password);
-  await page.click('input[type="submit"]');
-  await page.waitForLoadState("networkidle");
-
-  if (page.url().includes("/two_step_verifications")) {
-    console.log("[crawler] 2FA required. Waiting for code from DB (mf_2fa_pending_code)...");
-    const code = await get2faCode();
-    if (!code) throw new Error("2FA timeout: no code received within 5 minutes");
-    await page.goto(
-      `${BASE_URL}/users/two_step_verifications/verify/${code}`,
-      { waitUntil: "networkidle" }
-    );
-  }
-
-  console.log("[crawler] Login successful");
-}
-
-// 一括更新ボタンを押してデータを最新化する（ボタンがなければスキップ）
-async function triggerBulkUpdate(page: Page): Promise<void> {
-  try {
-    await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
-    const refreshBtn = page
-      .locator("a.refresh, a[href*='aggregation_queue']")
-      .first();
-    if (await refreshBtn.isVisible({ timeout: 3_000 })) {
-      await refreshBtn.click();
-      console.log("[crawler] Bulk update triggered");
-      // 更新完了を待機
-      await new Promise<void>((r) => setTimeout(r, 10_000));
-    }
-  } catch {
-    console.log("[crawler] No refresh button found, skipping bulk update");
-  }
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export interface ScrapedHolding {
   symbol: string;
@@ -156,182 +33,261 @@ export interface ScrapedHolding {
   costPerUnitJpy: number;
 }
 
+export interface ScrapedCreditWithdrawal {
+  cardName: string;
+  withdrawalDate: string;  // YYYY-MM-DD
+  amountJpy: number;
+  status: "scheduled" | "withdrawn";
+}
+
 export interface ScrapedData {
   totalJpy: number;
   categories: Partial<Record<AssetType, number>>;
   holdings: ScrapedHolding[];
+  creditCardWithdrawals?: ScrapedCreditWithdrawal[];
 }
 
-async function scrapePortfolio(page: Page): Promise<ScrapedData> {
-  await page.goto(`${BASE_URL}/accounts`, { waitUntil: "networkidle" });
+function loadCookiesFromDb(): string | undefined {
+  const row = db
+    .select()
+    .from(crawlerSessions)
+    .where(eq(crawlerSessions.name, "mf_sbi_bank"))
+    .get();
+  return row?.cookiesJson ?? undefined;
+}
 
-  // 総資産テキストをパース（例: "資産総額：\n38,247,980円"）
-  const totalText = await page
-    .locator("div.heading-radius-box")
-    .innerText()
-    .catch(() => "0");
-  const totalMatch = totalText.replace(/,/g, "").match(/[\d.]+/);
-  const totalJpy = totalMatch ? parseFloat(totalMatch[0]) : 0;
+function saveCookiesToDb(cookiesJson: string): void {
+  db
+    .insert(crawlerSessions)
+    .values({ name: "mf_sbi_bank", cookiesJson, savedAt: new Date() })
+    .onConflictDoUpdate({
+      target: crawlerSessions.name,
+      set: { cookiesJson, savedAt: new Date() },
+    })
+    .run();
+}
 
-  const categories: Partial<Record<AssetType, number>> = {};
-  const holdings: ScrapedHolding[] = [];
+/** DB から 2FA コードをポーリングして返す（最大 5分） */
+async function poll2faCodeFromDb(timeoutMs = 300_000): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const row = db
+      .select({ value: appSettings.value })
+      .from(appSettings)
+      .where(eq(appSettings.key, "mf_2fa_pending_code"))
+      .get();
+    if (row?.value) {
+      db.update(appSettings)
+        .set({ value: null })
+        .where(eq(appSettings.key, "mf_2fa_pending_code"))
+        .run();
+      return row.value;
+    }
+    await new Promise<void>((r) => setTimeout(r, 10_000));
+  }
+  return null;
+}
 
-  const rows = await page.locator("table tr").all();
-  for (const row of rows) {
-    const cells = await row.locator("td, th").all();
-    const count = cells.length;
+/** Node.js サブプロセスとの通信ループ */
+async function runBrowserProcess(
+  email: string,
+  password: string,
+  cookiesJson: string | undefined
+): Promise<{ data: ScrapedData; cookies: unknown[] }> {
+  const scraperPath = path.join(__dirname, "browser-scraper.mjs");
 
-    if (count === 2 || count === 3) {
-      // カテゴリ行: th=1 + td=2 の構造
-      const headerText = await row
-        .locator("th")
-        .first()
-        .locator("a")
-        .first()
-        .textContent()
-        .catch(() => null);
-      if (headerText) {
-        const catName = headerText.trim();
-        const valText = await row
-          .locator("td")
-          .first()
-          .textContent()
-          .catch(() => "0");
-        const val = parseAmount(valText ?? "0");
-        const assetType = CATEGORY_MAP[catName];
-        if (assetType) categories[assetType] = val;
-      }
-    } else if (count >= 13) {
-      // 株式保有行: td=13 の構造（td[1]=銘柄名, td[5]=評価額, td[7]=損益）
-      const name = ((await cells[1].textContent()) ?? "").trim();
-      const valueJpy = parseAmount((await cells[5].textContent()) ?? "0");
-      const unrealizedPnlJpy = parseAmount((await cells[7].textContent()) ?? "0");
-      if (name && valueJpy > 0) {
-        // 括弧内の銘柄コードを抽出。なければ名称の先頭を使う
-        const symbolMatch = name.match(/[（(]([A-Z0-9]{1,8})[）)]/);
-        const symbol = symbolMatch
-          ? symbolMatch[1]
-          : name.slice(0, 10).replace(/\s/g, "");
-        holdings.push({
-          symbol,
-          name,
-          assetType: detectAssetType(symbol),
-          valueJpy,
-          unrealizedPnlJpy,
-          quantity: 0,
-          priceJpy: 0,
-          costBasisJpy: 0,
-          costPerUnitJpy: 0,
-        });
-      }
-    } else if (count === 5) {
-      // 現金・預金行: td=5 の構造（td[0]=名称, td[1]=残高）
-      const name = ((await cells[0].textContent()) ?? "").trim();
-      const balance = parseAmount((await cells[1].textContent()) ?? "0");
-      if (name && balance > 0) {
-        holdings.push({
-          symbol: "",
-          name,
-          assetType: "CASH",
-          valueJpy: balance,
-          unrealizedPnlJpy: 0,
-          quantity: balance,
-          priceJpy: 1,
-          costBasisJpy: balance,
-          costPerUnitJpy: 1,
-        });
+  const proc = Bun.spawn({
+    cmd: ["node", scraperPath],
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      MF_EMAIL: email,
+      MF_PASSWORD: password,
+      ...(cookiesJson ? { MF_COOKIES_JSON: cookiesJson } : {}),
+    },
+  });
+
+  // stderr をリアルタイムでパイプスルー
+  (async () => {
+    const reader = proc.stderr.getReader();
+    const dec = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      process.stderr.write(dec.decode(value));
+    }
+  })();
+
+  // stdout を行ごとに読み取る
+  const reader = proc.stdout.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      if (trimmed === "REQUIRES_2FA") {
+        console.log("[crawler] 2FA required, polling DB for code...");
+        const code = await poll2faCodeFromDb();
+        if (!code) throw new Error("2FA timeout: no code received within 5 minutes");
+        const stdin = proc.stdin;
+        const encoder = new TextEncoder();
+        stdin.write(encoder.encode(`CODE:${code}\n`));
+      } else if (trimmed.startsWith("DONE:")) {
+        const json = trimmed.slice(5);
+        proc.stdin.end();
+        await proc.exited;
+        return JSON.parse(json) as { data: ScrapedData; cookies: unknown[] };
+      } else if (trimmed.startsWith("ERROR:")) {
+        proc.stdin.end();
+        await proc.exited;
+        throw new Error(trimmed.slice(6));
       }
     }
   }
 
-  return { totalJpy, categories, holdings };
+  proc.stdin.end();
+  await proc.exited;
+  throw new Error("Browser process exited without sending DONE or ERROR");
 }
 
 export async function runScrape(): Promise<ScrapedData> {
-  const headless = process.env.PLAYWRIGHT_HEADLESS !== "false";
-  const browser = await chromium.launch({ headless });
-  const context = await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+  // DB 優先、なければ env フォールバック
+  const email = settingsRepo.get("mf_email") ?? process.env.MF_EMAIL ?? "";
+  const password = settingsRepo.get("mf_password") ?? process.env.MF_PASSWORD ?? "";
+
+  if (!email || !password) {
+    throw new Error("MF_EMAIL or MF_PASSWORD not set (設定ページで入力してください)");
+  }
+
+  const cookiesJson = loadCookiesFromDb();
+
+  const { data, cookies } = await runBrowserProcess(email, password, cookiesJson);
+
+  // セッション Cookie を DB へ保存
+  saveCookiesToDb(JSON.stringify(cookies));
+
+  // スクレイプイベントを DB へ記録
+  db.insert(scrapeEvents)
+    .values({ scrapedAt: new Date(), rawJson: JSON.stringify(data) })
+    .run();
+
+  const today = new Date().toISOString().split("T")[0];
+  const assetsRepo = new AssetsRepo(db);
+  const snapshotsRepo = new SnapshotsRepo(db);
+  const dailyRepo = new DailyTotalsRepo(db);
+
+  // 重複排除: 同じ名前で複数のエントリがある場合、証券コード(STOCK_JP/STOCK_US/FUND)を優先して
+  // 銘柄名ベースのCASHエントリを除外する
+  const holdingsByName = new Map<string, ScrapedHolding>();
+  for (const h of data.holdings) {
+    const existing = holdingsByName.get(h.name);
+    if (!existing) {
+      holdingsByName.set(h.name, h);
+    } else {
+      // 既存が CASH で新しいのが非 CASH → 非 CASH を優先
+      if (existing.assetType === "CASH" && h.assetType !== "CASH") {
+        holdingsByName.set(h.name, h);
+      }
+      // 既存が非 CASH で新しいのが CASH → 既存を維持（何もしない）
+      // 両方非 CASH → valueJpy が大きい方を優先（同銘柄の重複）
+      else if (existing.assetType !== "CASH" && h.assetType !== "CASH") {
+        if (h.valueJpy > existing.valueJpy) {
+          holdingsByName.set(h.name, h);
+        }
+      }
+    }
+  }
+  const deduplicatedHoldings = Array.from(holdingsByName.values());
+
+  // categories["STOCK_US"] が MF の UI 構造上取得できないため、holdings から補完
+  // (MF は全株式を "株式（現物）" = STOCK_JP としてまとめて表示するため STOCK_US は 0 になる)
+  data.categories["STOCK_US"] = deduplicatedHoldings
+    .filter((h) => h.assetType === "STOCK_US")
+    .reduce((sum, h) => sum + h.valueJpy, 0);
+  // STOCK_JP は MF categories から取得した合計を使用（US株込みの全株式合計）
+  // ただし STOCK_US 分を差し引いて純粋な日本株合計にする
+  if (data.categories["STOCK_JP"] && data.categories["STOCK_JP"] > 0) {
+    data.categories["STOCK_JP"] = data.categories["STOCK_JP"] - data.categories["STOCK_US"];
+  }
+
+  for (const h of deduplicatedHoldings) {
+    const assetId = assetsRepo.upsert({
+      symbol: h.symbol || h.name.slice(0, 50),
+      name: h.name,
+      assetType: h.assetType,
+    });
+    // unrealizedPnlPct: costBasisJpy がある場合はコスト基準、なければ valueJpy 基準で計算
+    // (MF は取得単価を提供しないケースが多いため valueJpy ベースをフォールバックとして使用)
+    const unrealizedPnlPct =
+      h.costBasisJpy > 0
+        ? (h.unrealizedPnlJpy / h.costBasisJpy) * 100
+        : h.valueJpy > 0 && h.unrealizedPnlJpy !== 0
+          ? (h.unrealizedPnlJpy / (h.valueJpy - h.unrealizedPnlJpy)) * 100
+          : 0;
+    snapshotsRepo.upsertSnapshot({
+      assetId,
+      date: today,
+      quantity: h.quantity,
+      priceJpy: h.priceJpy,
+      valueJpy: h.valueJpy,
+      costBasisJpy: h.costBasisJpy,
+      costPerUnitJpy: h.costPerUnitJpy,
+      unrealizedPnlJpy: h.unrealizedPnlJpy,
+      unrealizedPnlPct,
+    });
+  }
+
+  const prevDay = dailyRepo.getLatest();
+  const prevTotal = prevDay?.totalJpy ?? 0;
+  dailyRepo.upsert({
+    date: today,
+    totalJpy: data.totalJpy,
+    stockJpJpy: data.categories["STOCK_JP"] ?? 0,
+    stockUsJpy: data.categories["STOCK_US"] ?? 0,
+    fundJpy: data.categories["FUND"] ?? 0,
+    cashJpy: data.categories["CASH"] ?? 0,
+    pensionJpy: data.categories["PENSION"] ?? 0,
+    pointJpy: data.categories["POINT"] ?? 0,
+    prevDiffJpy: data.totalJpy - prevTotal,
+    prevDiffPct:
+      prevTotal > 0
+        ? ((data.totalJpy - prevTotal) / prevTotal) * 100
+        : 0,
   });
 
-  try {
-    const sessionLoaded = await loadSession(context);
-    const page = await context.newPage();
-
-    if (sessionLoaded) {
-      // セッションが有効か確認し、期限切れなら再ログイン
-      await page.goto(`${BASE_URL}/accounts`, { waitUntil: "networkidle" });
-      if (page.url().includes("sign_in")) {
-        console.log("[crawler] Session expired, re-login");
-        await login(page);
-      }
-    } else {
-      await login(page);
+  // クレカ引き落とし情報を DB に保存
+  if (data.creditCardWithdrawals && data.creditCardWithdrawals.length > 0) {
+    const scrapedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
+    for (const w of data.creditCardWithdrawals) {
+      db
+        .insert(creditCardWithdrawals)
+        .values({
+          cardName: w.cardName,
+          withdrawalDate: w.withdrawalDate,
+          amountJpy: w.amountJpy,
+          status: w.status,
+          scrapedAt,
+        })
+        .onConflictDoNothing()
+        .run();
     }
-
-    await saveSession(context);
-    await triggerBulkUpdate(page);
-
-    const data = await scrapePortfolio(page);
-
-    // 生データをイベントストアに保存
-    db.insert(scrapeEvents)
-      .values({ scrapedAt: new Date(), rawJson: JSON.stringify(data) })
-      .run();
-
-    const today = new Date().toISOString().split("T")[0];
-    const assetsRepo = new AssetsRepo(db);
-    const snapshotsRepo = new SnapshotsRepo(db);
-    const dailyRepo = new DailyTotalsRepo(db);
-
-    for (const h of data.holdings) {
-      const assetId = assetsRepo.upsert({
-        symbol: h.symbol || h.name.slice(0, 50),
-        name: h.name,
-        assetType: h.assetType,
-      });
-      snapshotsRepo.upsertSnapshot({
-        assetId,
-        date: today,
-        quantity: h.quantity,
-        priceJpy: h.priceJpy,
-        valueJpy: h.valueJpy,
-        costBasisJpy: h.costBasisJpy,
-        costPerUnitJpy: h.costPerUnitJpy,
-        unrealizedPnlJpy: h.unrealizedPnlJpy,
-        unrealizedPnlPct:
-          h.costBasisJpy > 0
-            ? (h.unrealizedPnlJpy / h.costBasisJpy) * 100
-            : 0,
-      });
-    }
-
-    // 前日合計を参照して差分を計算
-    const prevDay = dailyRepo.getLatest();
-    const prevTotal = prevDay?.totalJpy ?? 0;
-    dailyRepo.upsert({
-      date: today,
-      totalJpy: data.totalJpy,
-      stockJpJpy: data.categories["STOCK_JP"] ?? 0,
-      stockUsJpy: data.categories["STOCK_US"] ?? 0,
-      fundJpy: data.categories["FUND"] ?? 0,
-      cashJpy: data.categories["CASH"] ?? 0,
-      pensionJpy: data.categories["PENSION"] ?? 0,
-      pointJpy: data.categories["POINT"] ?? 0,
-      prevDiffJpy: data.totalJpy - prevTotal,
-      prevDiffPct:
-        prevTotal > 0
-          ? ((data.totalJpy - prevTotal) / prevTotal) * 100
-          : 0,
-    });
-
-    console.log(
-      `[crawler] Scrape complete: ¥${data.totalJpy.toLocaleString()}`
-    );
-    return data;
-  } finally {
-    await context.close();
-    await browser.close();
+    console.log(`[crawler] Saved ${data.creditCardWithdrawals.length} credit card withdrawal(s)`);
   }
+
+  console.log(
+    `[crawler] Scrape complete: ¥${data.totalJpy.toLocaleString()}`
+  );
+  return data;
 }

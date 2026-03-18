@@ -8,10 +8,6 @@ import type { Context } from "./trpc";
 
 const app = new Hono();
 
-if (!process.env.API_KEY) {
-  console.warn("[api] WARNING: API_KEY not set — all API requests will be rejected");
-}
-
 const origin = process.env.WEB_ORIGIN ?? "http://localhost:3000";
 if (origin === "*") {
   console.warn("[api] WARNING: WEB_ORIGIN=* — all origins allowed, not recommended for production");
@@ -42,7 +38,11 @@ app.all("/trpc/*", (c) => {
 const port = parseInt(process.env.PORT ?? "8000", 10);
 console.log(`AssetBridge API v2 starting on port ${port}`);
 
-export default {
+// PM2 + Windows互換のため export default ではなく Bun.serve() で明示的に起動
+const server = Bun.serve({
   port,
+  hostname: "0.0.0.0",
   fetch: app.fetch,
-};
+});
+
+console.log(`Server listening on http://0.0.0.0:${server.port}`);

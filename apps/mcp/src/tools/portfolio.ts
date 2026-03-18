@@ -21,7 +21,7 @@ export function registerPortfolioTools(server: McpServer): void {
     "get_holdings",
     "保有銘柄一覧。assetType(stock_jp/stock_us/fund/cash/pension/all)・minValueJpy・queryで絞り込み。",
     {
-      assetType: z.string().default("all").describe("all/stock_jp/stock_us/fund/cash/pension"),
+      assetType: z.enum(["all", "stock_jp", "stock_us", "fund", "cash", "pension", "point"]).default("all").describe("all/stock_jp/stock_us/fund/cash/pension/point"),
       minValueJpy: z.number().optional().describe("最低評価額フィルタ（円）"),
       query: z.string().optional().describe("銘柄名・コードの検索クエリ"),
     },
