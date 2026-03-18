@@ -3,9 +3,16 @@
 import { Database } from "bun:sqlite";
 import { readFileSync, readdirSync, existsSync, mkdirSync } from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+function resolveDefaultDbPath(): string {
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  // scripts/migrate.ts を基準に、常にリポジトリ直下 data/ を指す。
+  return path.resolve(currentDir, "..", "data", "assetbridge_v2.db");
+}
 
 const dbPath = path.resolve(
-  process.env.ASSETBRIDGE_DB_PATH ?? path.join(process.cwd(), "data", "assetbridge_v2.db")
+  process.env.ASSETBRIDGE_DB_PATH ?? resolveDefaultDbPath()
 );
 
 // data/ ディレクトリを作成
