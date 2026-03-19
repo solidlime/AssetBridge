@@ -11,6 +11,9 @@
  *   CODE:<6〜8桁の数字>\n    → Bun から 2FA コードを受け取る
  */
 
+// MARKER: v2-anchor-based-scraper
+process.stderr.write(`[browser-scraper] FILE_PATH=${new URL(import.meta.url).pathname}\n`);
+
 import { chromium } from "playwright";
 
 const BASE_URL = "https://ssnb.x.moneyforward.com";
@@ -34,6 +37,18 @@ function detectAssetType(symbol) {
 function parseAmount(text) {
   const match = String(text).replace(/,/g, "").match(/[\d.]+/);
   return match ? parseFloat(match[0]) : 0;
+}
+
+/**
+ * クレカ金額専用パーサー。失敗時は null を返す（スキップ用）。
+ * parseAmount とは別関数で、scrapePortfolio に影響しない。
+ */
+export function parseCardAmount(text) {
+  if (!text) return null;
+  const match = String(text).replace(/[¥円\s]/g, "").match(/-?[\d,]+/);
+  if (!match) return null;
+  const num = parseInt(match[0].replace(/,/g, ""), 10);
+  return isNaN(num) ? null : Math.abs(num);
 }
 
 function send(line) {
@@ -104,86 +119,261 @@ async function login(page) {
 }
 
 /**
+ * カードブロックのテキストをパースして { cardName, withdrawalDate, amountJpy, status } を返す
+ * ブロックが有効なカードでなければ null を返す
+ */
+function parseCardBlock(blockText) {
+  const lines = blockText.split('\n').map(l => l.trim()).filter(l => l);
+
+  // カード名: 「金融機関サービスサイトへ」を含む行から抽出
+  let cardName = '不明';
+  const cardLine = lines.find(l => l.includes('金融機関サービスサイトへ'));
+  if (cardLine) {
+    cardName = cardLine.replace('金融機関サービスサイトへ', '').trim();
+  }
+  if (!cardName || cardName === '') return null;
+
+  // 引き落とし日: 「引き落とし日:(YYYY/MM/DD)」から抽出
+  let withdrawalDate = null;
+  const dateLine = lines.find(l => l.includes('引き落とし日:'));
+  if (dateLine) {
+    const dateMatch = dateLine.match(/(\d{4})\/(\d{2})\/(\d{2})/);
+    if (dateMatch) withdrawalDate = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+  }
+
+  // 引き落とし額: 優先順位付きロジック
+  let amountJpy = null;
+  if (lines.some(l => l.includes('引き落とし額未確定'))) {
+    // 未確定: 利用残高から取得 (Math.abs)
+    const balanceLine = lines.find(l => l.includes('利用残高:'));
+    if (balanceLine) {
+      const m = balanceLine.match(/利用残高[:\s]*-?([\d,]+)/);
+      if (m) amountJpy = parseCardAmount(m[1]);
+    }
+  } else {
+    // 確定: 引き落とし日の直前の行から金額取得
+    const dateIdx = lines.findIndex(l => l.includes('引き落とし日:'));
+    if (dateIdx > 0) {
+      const amountLine = lines[dateIdx - 1];
+      const m = amountLine.match(/-?([\d,]+)円/);
+      if (m) amountJpy = parseCardAmount(m[1]);
+    }
+  }
+
+  if (amountJpy === null) return null; // null なら skip
+
+  return { cardName: cardName.slice(0, 100), withdrawalDate, amountJpy, status: 'scheduled' };
+}
+
+/**
  * クレジットカード引き落とし予定情報をスクレイプ
- * MF のキャッシュフロー画面 (/bs/cf) または入出金ページから取得する
+ * トップページの「金融機関サービスサイトへ」アンカーベースで取得し、
+ * 失敗時は /bs/cf → /bs/accounts にフォールバック
  */
 async function scrapeCreditCardWithdrawals(page) {
   const results = [];
-  try {
-    await page.goto(`${BASE_URL}/bs/cf`, { waitUntil: "networkidle", timeout: 20000 });
-    await new Promise(r => setTimeout(r, 3000));
-    process.stderr.write(`[browser-scraper] scrapeCreditCardWithdrawals: URL=${page.url()}\n`);
+  const urlsToTry = [BASE_URL, `${BASE_URL}/bs/cf`, `${BASE_URL}/bs/accounts`];
 
-    // テーブル行からクレカ引き落とし関連データを取得
-    const tableData = await page.evaluate(() => {
-      const rows = [];
-      for (const tr of document.querySelectorAll('table tr')) {
-        const cells = Array.from(tr.querySelectorAll('td,th')).map(c => c.innerText.trim());
-        rows.push({ cells, rowClass: tr.className });
-      }
-      return rows;
-    });
+  for (const url of urlsToTry) {
+    if (results.length > 0) break;
+    try {
+      await page.goto(url, { waitUntil: "networkidle", timeout: 20000 });
+      await new Promise(r => setTimeout(r, 3000));
+      process.stderr.write(`[browser-scraper] scrapeCreditCardWithdrawals: URL=${page.url()}\n`);
 
-    process.stderr.write(`[browser-scraper] CF table rows: ${tableData.length}\n`);
+      // ── トップページ: 「金融機関サービスサイトへ」アンカーベース ──
+      if (url === BASE_URL) {
+        const cardBlocks = await page.evaluate(() => {
+          // 「金融機関サービスサイトへ」リンクを全て取得 → 各カードの起点
+          const anchors = Array.from(document.querySelectorAll('a'));
+          const cardAnchors = anchors.filter(a => a.textContent.includes('金融機関サービスサイトへ'));
 
-    // クレカ引き落とし関連キーワードでフィルタ
-    const creditKeywords = ['カード', '引き落とし', '引落', 'クレジット', 'VISA', 'Mastercard', 'JCB', 'AMEX'];
-    for (const { cells } of tableData) {
-      const rowText = cells.join(' ');
-      if (creditKeywords.some(kw => rowText.includes(kw))) {
-        process.stderr.write(`[browser-scraper] Credit row: ${JSON.stringify(cells)}\n`);
-        // 日付パターン (YYYY/MM/DD または MM/DD) を探す
-        const dateMatch = rowText.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-        const shortDateMatch = rowText.match(/(\d{1,2})[\/\-](\d{1,2})/);
-        // 金額パターン
-        const amountCell = cells.find(c => c.replace(/,/g, '').match(/^\d{3,}/));
-        const amountMatch = amountCell ? amountCell.replace(/,/g, '').match(/[\d.]+/) : null;
-
-        if (amountMatch && (dateMatch || shortDateMatch)) {
-          let withdrawalDate;
-          if (dateMatch) {
-            withdrawalDate = `${dateMatch[1]}-${String(dateMatch[2]).padStart(2, '0')}-${String(dateMatch[3]).padStart(2, '0')}`;
-          } else {
-            const now = new Date();
-            const month = parseInt(shortDateMatch[1]);
-            const day = parseInt(shortDateMatch[2]);
-            let year = now.getFullYear();
-            // 月が現在より前なら来年
-            if (month < now.getMonth() + 1) year++;
-            withdrawalDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          }
-          const cardName = cells.find(c => creditKeywords.some(kw => c.includes(kw))) || 'クレジットカード';
-          results.push({
-            cardName: cardName.slice(0, 100),
-            withdrawalDate,
-            amountJpy: parseFloat(amountMatch[0]),
-            status: 'scheduled',
+          return cardAnchors.map(a => {
+            // カード名はアンカーの親要素のテキスト or 直前のテキスト
+            const wrapper = a.closest('li, .account-item, .card-item, section, div') || a.parentElement;
+            return wrapper ? wrapper.innerText : '';
           });
-        }
-      }
-    }
+        });
 
-    // テーブル以外のリスト要素でも探す
-    if (results.length === 0) {
-      const listData = await page.evaluate(() => {
-        const items = [];
-        // dl/dt/dd パターン
-        for (const dt of document.querySelectorAll('dt, .title, .name, [class*="name"]')) {
-          const text = (dt.innerText || '').trim();
-          if (text.includes('カード') || text.includes('引落') || text.includes('引き落とし')) {
-            const sibling = dt.nextElementSibling;
-            const amount = sibling ? (sibling.innerText || '').trim() : '';
-            items.push({ label: text.slice(0, 100), amount: amount.slice(0, 50) });
+        process.stderr.write(`[browser-scraper] Card anchors found: ${cardBlocks.length}\n`);
+        for (let i = 0; i < cardBlocks.length; i++) {
+          process.stderr.write(`[browser-scraper] Card block[${i}]: ${cardBlocks[i].slice(0, 300)}\n`);
+        }
+
+        for (const blockText of cardBlocks) {
+          const parsed = parseCardBlock(blockText);
+          if (parsed) {
+            process.stderr.write(`[browser-scraper] Parsed card: ${JSON.stringify(parsed)}\n`);
+            results.push(parsed);
+          } else {
+            process.stderr.write(`[browser-scraper] parseCardBlock returned null for block: ${blockText.slice(0, 100)}\n`);
           }
         }
-        return items;
-      });
-      process.stderr.write(`[browser-scraper] CF list items: ${JSON.stringify(listData)}\n`);
-    }
 
-    process.stderr.write(`[browser-scraper] Credit withdrawals found: ${results.length}\n`);
-  } catch (e) {
-    process.stderr.write(`[browser-scraper] scrapeCreditCardWithdrawals error: ${e.message}\n`);
+        process.stderr.write(`[browser-scraper] Credit withdrawals found on ${url}: ${results.length}\n`);
+        continue;
+      }
+
+      // ── フォールバック: テーブルベースのアプローチ ──
+
+      // デバッグ: ページ内テーブル数・行数
+      const debugInfo = await page.evaluate(() => {
+        const tables = document.querySelectorAll('table');
+        const info = { tableCount: tables.length, rows: [] };
+        for (const table of tables) {
+          for (const tr of table.querySelectorAll('tr')) {
+            const text = tr.innerText.trim().slice(0, 200);
+            if (text) info.rows.push(text);
+          }
+        }
+        return info;
+      });
+      process.stderr.write(`[browser-scraper] Tables: ${debugInfo.tableCount}, Rows: ${debugInfo.rows.length}\n`);
+
+      // MF 固有セレクタを優先して試みる
+      const mfSpecificData = await page.evaluate(() => {
+        const rows = [];
+        const selectors = [
+          'table.table_credit_card tr',
+          '.credit-card-payment',
+          '#cf-table tr',
+          '[class*="withdrawal"] tr',
+          '[class*="payment"] tr',
+          '[class*="card"] tr',
+          '[class*="credit"] tr',
+        ];
+        for (const sel of selectors) {
+          for (const el of document.querySelectorAll(sel)) {
+            const cells = Array.from(el.querySelectorAll('td,th')).map(c => c.innerText.trim());
+            if (cells.length > 0) rows.push({ cells, rowClass: el.className, selector: sel });
+          }
+        }
+        return rows;
+      });
+      process.stderr.write(`[browser-scraper] MF-specific rows: ${mfSpecificData.length}\n`);
+
+      // 汎用テーブル行も取得
+      const tableData = await page.evaluate(() => {
+        const rows = [];
+        for (const tr of document.querySelectorAll('table tr')) {
+          const cells = Array.from(tr.querySelectorAll('td,th')).map(c => c.innerText.trim());
+          rows.push({ cells, rowClass: tr.className });
+        }
+        return rows;
+      });
+
+      const allRows = [...mfSpecificData, ...tableData];
+      process.stderr.write(`[browser-scraper] CF total candidate rows: ${allRows.length}\n`);
+
+      const creditKeywords = ['カード', '引き落とし', '引落', 'クレジット', 'VISA', 'Mastercard', 'JCB', 'AMEX'];
+      for (const { cells } of allRows) {
+        const rowText = cells.join(' ');
+        if (creditKeywords.some(kw => rowText.includes(kw))) {
+          const dateMatch = rowText.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+          const shortDateMatch = rowText.match(/(\d{1,2})[\/\-](\d{1,2})/);
+          const amountCell = cells.find(c => c.replace(/,/g, '').match(/^\d{3,}/));
+          const amountMatch = amountCell ? amountCell.replace(/,/g, '').match(/[\d.]+/) : null;
+
+          if (amountMatch && (dateMatch || shortDateMatch)) {
+            let withdrawalDate;
+            if (dateMatch) {
+              withdrawalDate = `${dateMatch[1]}-${String(dateMatch[2]).padStart(2, '0')}-${String(dateMatch[3]).padStart(2, '0')}`;
+            } else {
+              const now = new Date();
+              const month = parseInt(shortDateMatch[1]);
+              const day = parseInt(shortDateMatch[2]);
+              let year = now.getFullYear();
+              if (month < now.getMonth() + 1) year++;
+              withdrawalDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            }
+            const cardName = cells.find(c => creditKeywords.some(kw => c.includes(kw))) || 'クレジットカード';
+            const amountJpy = parseCardAmount(amountMatch[0]);
+            if (amountJpy === null) continue; // null なら skip
+            results.push({
+              cardName: cardName.slice(0, 100),
+              withdrawalDate,
+              amountJpy,
+              status: 'scheduled',
+            });
+          }
+        }
+      }
+
+      // テーブルで見つからなければ dl/dt/dd パターンも試みる
+      if (results.length === 0) {
+        const listData = await page.evaluate(() => {
+          const items = [];
+          for (const dt of document.querySelectorAll('dt, .title, .name, [class*="name"]')) {
+            const text = (dt.innerText || '').trim();
+            if (text.includes('カード') || text.includes('引落') || text.includes('引き落とし')) {
+              const sibling = dt.nextElementSibling;
+              const amountText = sibling ? (sibling.innerText || '').trim() : '';
+              items.push({ label: text.slice(0, 100), amount: amountText.slice(0, 500) });
+            }
+          }
+          return items;
+        });
+        process.stderr.write(`[browser-scraper] CF list items: ${JSON.stringify(listData)}\n`);
+
+        for (const item of listData) {
+          let amount = 0;
+          const balanceMatch = item.amount.match(/利用残高[:\s]*(-?[\d,]+)/);
+          if (balanceMatch) {
+            const parsed = parseCardAmount(balanceMatch[1]);
+            if (parsed === null) continue; // null なら skip
+            amount = parsed;
+          } else {
+            const scheduledMatch = item.amount.match(/引き落とし[^\d]*(-?[\d,]+)/);
+            if (scheduledMatch) {
+              const parsed = parseCardAmount(scheduledMatch[1]);
+              if (parsed === null) continue; // null なら skip
+              amount = parsed;
+            } else {
+              const allNums = (item.amount.replace(/,/g, '')).match(/\d+/g) || [];
+              const big = allNums.map(Number).filter(n => n >= 1000);
+              amount = big.length > 0 ? big[0] : 0;
+            }
+          }
+
+          const firstLine = item.amount.split('\n')[0].trim();
+          const cardName = firstLine && firstLine.length > 0 && firstLine !== item.label
+            ? firstLine
+            : (item.label || 'カード');
+
+          const dateMatch = item.label.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/) ||
+                            item.amount.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+          const shortDateMatch = item.label.match(/(\d{1,2})[\/\-](\d{1,2})/) ||
+                                  item.amount.match(/(\d{1,2})[\/\-](\d{1,2})/);
+
+          if (amount > 0) {
+            let withdrawalDate;
+            if (dateMatch) {
+              withdrawalDate = `${dateMatch[1]}-${String(dateMatch[2]).padStart(2, '0')}-${String(dateMatch[3]).padStart(2, '0')}`;
+            } else if (shortDateMatch) {
+              const now = new Date();
+              const month = parseInt(shortDateMatch[1]);
+              const day = parseInt(shortDateMatch[2]);
+              let year = now.getFullYear();
+              if (month < now.getMonth() + 1) year++;
+              withdrawalDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            } else {
+              const now = new Date();
+              withdrawalDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-27`;
+            }
+            results.push({
+              cardName: cardName.slice(0, 100),
+              withdrawalDate,
+              amountJpy: amount,
+              status: 'scheduled',
+            });
+          }
+        }
+      }
+
+      process.stderr.write(`[browser-scraper] Credit withdrawals found on ${url}: ${results.length}\n`);
+    } catch (e) {
+      process.stderr.write(`[browser-scraper] scrapeCreditCardWithdrawals error on ${url}: ${e.message}\n`);
+    }
   }
   return results;
 }
@@ -259,11 +449,15 @@ async function scrapePortfolio(page) {
           const symbolMatch = name.match(/[（(]([A-Z0-9]{1,8})[）)]/);
           symbol = symbolMatch ? symbolMatch[1] : codeCandidate || name.slice(0, 10).replace(/\s/g, "");
         }
+        const quantity = parseAmount(cellTexts[4] ?? "0");
+        const costPerUnitJpy = parseAmount(cellTexts[6] ?? "0");
+        const priceJpy = quantity > 0 ? valueJpy / quantity : 0;
+        const costBasisJpy = costPerUnitJpy * quantity;
         holdings.push({
           symbol, name,
           assetType: detectAssetType(symbol),
           valueJpy, unrealizedPnlJpy,
-          quantity: 0, priceJpy: 0, costBasisJpy: 0, costPerUnitJpy: 0,
+          quantity, priceJpy, costBasisJpy, costPerUnitJpy,
         });
       }
     } else if (count === 5) {
