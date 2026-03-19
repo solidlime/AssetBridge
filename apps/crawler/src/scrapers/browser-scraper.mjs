@@ -122,7 +122,7 @@ async function login(page) {
  * カードブロックのテキストをパースして { cardName, withdrawalDate, amountJpy, status } を返す
  * ブロックが有効なカードでなければ null を返す
  */
-function parseCardBlock(blockText) {
+export function parseCardBlock(blockText) {
   const lines = blockText.split('\n').map(l => l.trim()).filter(l => l);
 
   // カード名: 「金融機関サービスサイトへ」を含む行から抽出
