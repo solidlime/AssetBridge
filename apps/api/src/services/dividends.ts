@@ -47,12 +47,35 @@ async function fetchDividendData(symbol: string, _assetType: string): Promise<Yf
     return {
       yieldPct: rawYield * 100,
       nextExDate: calendar?.exDividendDate
-        ? new Date(calendar.exDividendDate).toISOString().split("T")[0]
+        ? (() => {
+            const d = new Date(calendar.exDividendDate);
+            return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+          })()
         : undefined,
     };
   } catch {
     return { yieldPct: 0, nextExDate: undefined };
   }
+}
+
+export function buildMonthlyBreakdown(
+  holdings: { annualEstJpy: number; nextExDate: string | null }[]
+): number[] {
+  const monthly = Array(12).fill(0) as number[];
+  for (const h of holdings) {
+    if (h.annualEstJpy <= 0) continue;
+    if (h.nextExDate) {
+      const exMonth = parseInt(h.nextExDate.split("-")[1], 10) - 1;
+      const exMonth2 = (exMonth + 6) % 12;
+      monthly[exMonth] += h.annualEstJpy / 2;
+      monthly[exMonth2] += h.annualEstJpy / 2;
+    } else {
+      for (let m = 0; m < 12; m++) {
+        monthly[m] += h.annualEstJpy / 12;
+      }
+    }
+  }
+  return monthly;
 }
 
 export async function getDividendCalendar(): Promise<DividendCalendar> {
@@ -89,8 +112,7 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
   const totalValue = holdings.reduce((a, h) => a + h.valueJpy, 0);
   const portfolioYieldPct = totalValue > 0 ? (totalAnnualEstJpy / totalValue) * 100 : 0;
 
-  // 月別分布は簡易均等配分
-  const monthlyBreakdown = Array(12).fill(totalAnnualEstJpy / 12) as number[];
+  const monthlyBreakdown = buildMonthlyBreakdown(holdingsResult);
 
   // 30日以上前の過去日付は除外（Yahoo Finance のスタールデータを除去）
   const cutoff = new Date();
