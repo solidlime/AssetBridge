@@ -1,7 +1,116 @@
 import { db } from "@assetbridge/db/client";
 import { assets, portfolioSnapshots, dailyTotals } from "@assetbridge/db/schema";
 import type { PortfolioSnapshot, HoldingItem, DailyTotal, AssetType, AssetDetail, AssetMarketData, NewsItem } from "@assetbridge/types";
-import { eq, desc, gte, lte, and } from "drizzle-orm";
+import { eq, desc, gte, and, lt } from "drizzle-orm";
+
+// ─── 内部型定義 ───────────────────────────────────────────────────────────────
+
+/** portfolioSnapshots JOIN assets から得られる行の型 */
+type DbRow = {
+  portfolio_snapshots: {
+    assetId: number;
+    priceJpy: number;
+    valueJpy: number;
+    costBasisJpy: number;
+    costPerUnitJpy: number;
+    unrealizedPnlJpy: number;
+    unrealizedPnlPct: number;
+    quantity: number;
+  };
+  assets: {
+    symbol: string;
+    name: string;
+    assetType: string;
+  };
+};
+
+type PrevSnapshot = { priceJpy: number; valueJpy: number };
+
+// ─── 純粋関数 1: Yahoo Finance から priceDiffPct を取得 ───────────────────────
+
+/**
+ * 指定ティッカー（YF 形式、JP株は ".T" 付き）ごとに
+ * regularMarketChangePercent を取得して Map で返す。
+ * 失敗したティッカーはマップに含まれない。
+ */
+export async function fetchYahooQuotes(
+  tickers: string[]
+): Promise<Map<string, number>> {
+  if (tickers.length === 0) return new Map();
+
+  const yf = await import("yahoo-finance2");
+  type YfQuoteResult = { regularMarketChangePercent?: number | null };
+  type YfClient = {
+    quote: (symbol: string, opts?: { fields?: string[] }) => Promise<YfQuoteResult>;
+  };
+  type YfConstructor = new (opts?: { suppressNotices?: string[] }) => YfClient;
+  const YahooFinance = yf.default as unknown as YfConstructor;
+  const yfInstance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
+
+  const results = await Promise.allSettled(
+    tickers.map((t) =>
+      yfInstance
+        .quote(t, { fields: ["regularMarketChangePercent"] })
+        .then((q) => ({ ticker: t, value: q?.regularMarketChangePercent ?? null }))
+    )
+  );
+
+  const map = new Map<string, number>();
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled" && r.value.value !== null) {
+      map.set(r.value.ticker, r.value.value);
+    } else if (r.status === "rejected") {
+      console.warn(`YF quote failed for ticker ${tickers[i]}: ${r.reason}`);
+    }
+  });
+  return map;
+}
+
+// ─── 純粋関数 2: DB 行 + quotes Map → HoldingItem[] ──────────────────────────
+
+/**
+ * DB から取得した行と YF 価格変動 Map を受け取り、
+ * フロントエンド用の HoldingItem 配列に変換する純粋関数。
+ *
+ * @param rows          portfolioSnapshots JOIN assets の行
+ * @param quotes        symbol → priceDiffPct のマップ（元のシンボルをキーとする）
+ * @param prevSnapshotMap  前日スナップショット（assetId → {priceJpy, valueJpy}）
+ * @param total         ポートフォリオ総額（portfolioWeightPct 計算用）
+ */
+export function mapToHoldingItems(
+  rows: DbRow[],
+  quotes: Map<string, number>,
+  prevSnapshotMap: Map<number, PrevSnapshot> = new Map(),
+  total: number = 0
+): HoldingItem[] {
+  return rows.map((r) => {
+    const prev = prevSnapshotMap.get(r.portfolio_snapshots.assetId) ?? null;
+    const valueDiffJpy =
+      prev !== null ? r.portfolio_snapshots.valueJpy - prev.valueJpy : null;
+    const valueDiffPct =
+      prev !== null && prev.valueJpy !== 0
+        ? ((r.portfolio_snapshots.valueJpy - prev.valueJpy) / prev.valueJpy) * 100
+        : null;
+
+    return {
+      symbol: r.assets.symbol,
+      name: r.assets.name,
+      assetType: r.assets.assetType as AssetType,
+      valueJpy: r.portfolio_snapshots.valueJpy,
+      costBasisJpy: r.portfolio_snapshots.costBasisJpy,
+      unrealizedPnlJpy: r.portfolio_snapshots.unrealizedPnlJpy,
+      unrealizedPnlPct: r.portfolio_snapshots.unrealizedPnlPct,
+      portfolioWeightPct:
+        total > 0 ? (r.portfolio_snapshots.valueJpy / total) * 100 : 0,
+      quantity: r.portfolio_snapshots.quantity,
+      priceJpy: r.portfolio_snapshots.priceJpy,
+      costPerUnitJpy: r.portfolio_snapshots.costPerUnitJpy,
+      valueDiffJpy,
+      valueDiffPct,
+      priceDiffPct: quotes.get(r.assets.symbol) ?? null,
+    };
+  });
+}
 
 export async function getSnapshot(date?: string): Promise<PortfolioSnapshot> {
   // 最新の daily_totals 行を取得
@@ -131,19 +240,68 @@ export async function getHoldings(filter: {
     .where(eq(portfolioSnapshots.date, latestDate))
     .all();
 
-  let items: HoldingItem[] = rows.map((r) => ({
-    symbol: r.assets.symbol,
-    name: r.assets.name,
-    assetType: r.assets.assetType as AssetType,
-    valueJpy: r.portfolio_snapshots.valueJpy,
-    costBasisJpy: r.portfolio_snapshots.costBasisJpy,
-    unrealizedPnlJpy: r.portfolio_snapshots.unrealizedPnlJpy,
-    unrealizedPnlPct: r.portfolio_snapshots.unrealizedPnlPct,
-    portfolioWeightPct: total > 0 ? (r.portfolio_snapshots.valueJpy / total) * 100 : 0,
-    quantity: r.portfolio_snapshots.quantity,
-    priceJpy: r.portfolio_snapshots.priceJpy,
-    costPerUnitJpy: r.portfolio_snapshots.costPerUnitJpy,
-  }));
+  // 前日の日付を取得
+  const prevDateRow = db
+    .select({ date: portfolioSnapshots.date })
+    .from(portfolioSnapshots)
+    .where(lt(portfolioSnapshots.date, latestDate))
+    .orderBy(desc(portfolioSnapshots.date))
+    .limit(1)
+    .get();
+  const prevDate = prevDateRow?.date ?? null;
+
+  // 前日スナップショットを Map 化
+  const prevSnapshotMap = new Map<number, { priceJpy: number; valueJpy: number }>();
+  if (prevDate) {
+    const prevRows = db
+      .select({
+        assetId: portfolioSnapshots.assetId,
+        priceJpy: portfolioSnapshots.priceJpy,
+        valueJpy: portfolioSnapshots.valueJpy,
+      })
+      .from(portfolioSnapshots)
+      .where(eq(portfolioSnapshots.date, prevDate))
+      .all();
+    for (const row of prevRows) {
+      prevSnapshotMap.set(row.assetId, { priceJpy: row.priceJpy, valueJpy: row.valueJpy });
+    }
+  }
+
+  // --- Yahoo Finance から priceDiffPct を取得（株式のみ）---
+  // yfSymbol → originalSymbol の逆引き Map を構築
+  const priceDiffMap = new Map<string, number>();
+  try {
+    const stockEntries = rows
+      .filter(
+        (r) =>
+          r.assets.assetType === "STOCK_JP" || r.assets.assetType === "STOCK_US"
+      )
+      .map((r) => {
+        const sym = r.assets.symbol;
+        // JP株: 4〜5桁数字 → "{symbol}.T"
+        const yfSymbol =
+          r.assets.assetType === "STOCK_JP" && /^\d{4,5}$/.test(sym)
+            ? `${sym}.T`
+            : sym;
+        return { symbol: sym, yfSymbol };
+      });
+
+    if (stockEntries.length > 0) {
+      const yfQuotes = await fetchYahooQuotes(stockEntries.map((e) => e.yfSymbol));
+      // yfSymbol → 元のシンボルに変換して priceDiffMap に格納
+      for (const { symbol, yfSymbol } of stockEntries) {
+        const pct = yfQuotes.get(yfSymbol);
+        if (pct !== undefined) {
+          priceDiffMap.set(symbol, pct);
+        }
+      }
+    }
+  } catch {
+    // Yahoo Finance 取得失敗時は priceDiffPct: null のまま継続
+  }
+
+  // rows → HoldingItem[] に変換（mapToHoldingItems に委譲）
+  let items = mapToHoldingItems(rows, priceDiffMap, prevSnapshotMap, total);
 
   if (filter.assetType && filter.assetType !== "all") {
     // フィルタ文字列 → AssetType への変換マップ
