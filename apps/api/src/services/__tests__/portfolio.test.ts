@@ -2,7 +2,7 @@ import { describe, it, expect, mock, beforeEach } from "bun:test";
 
 // ─── Yahoo Finance をモック（クラスパターン）───────────────────────────────────
 // NOTE: mock.module() はトップレベルで宣言し、import より前に置く必要がある
-const mockQuote = mock(async (ticker: string) => ({
+const mockQuote = mock(async (ticker: string): Promise<{ regularMarketChangePercent: number | null }> => ({
   regularMarketChangePercent: ticker === "AAPL" ? 1.5 : -0.5,
 }));
 
@@ -15,7 +15,7 @@ mock.module("yahoo-finance2", () => ({
   },
 }));
 
-import { fetchYahooQuotes, mapToHoldingItems } from "../portfolio";
+import { fetchYahooQuotes, mapToHoldingItems, getHoldings } from "../portfolio";
 import type { AssetType } from "@assetbridge/types";
 
 // ─── goldenスナップショット ─────────────────────────────────────────────────
@@ -207,5 +207,48 @@ describe("getHoldings golden snapshot", () => {
         expect(item).toHaveProperty(field);
       }
     }
+  });
+});
+
+// ─── getHoldings 統合テスト ───────────────────────────────────────────────────
+// NOTE: golden snapshot テスト（上記）が実際の DB を使った統合テストとして機能している。
+//       ここでは補完的な edge case テストのみ追加する。
+
+describe("getHoldings integration", () => {
+  it("filter.assetType=all で全銘柄を返す", async () => {
+    // golden snapshot のデータが存在することを前提
+    const result = await getHoldings({ assetType: "all" });
+    expect(Array.isArray(result)).toBe(true);
+    // golden snapshot に47銘柄あるので、最低限それ以上あることを確認
+    expect(result.length).toBeGreaterThanOrEqual(47);
+  });
+
+  it("filter.assetType で特定タイプのみ返す", async () => {
+    const result = await getHoldings({ assetType: "stock_us" });
+    expect(Array.isArray(result)).toBe(true);
+    // すべて STOCK_US であることを確認
+    result.forEach((item) => {
+      expect(item.assetType).toBe("STOCK_US");
+    });
+  });
+
+  it("filter.minValueJpy でフィルタする", async () => {
+    const result = await getHoldings({ assetType: "all", minValueJpy: 1000000 });
+    expect(Array.isArray(result)).toBe(true);
+    result.forEach((item) => {
+      expect(item.valueJpy).toBeGreaterThanOrEqual(1000000);
+    });
+  });
+
+  it("filter.query でシンボル・名前検索する", async () => {
+    const result = await getHoldings({ assetType: "all", query: "apple" });
+    expect(Array.isArray(result)).toBe(true);
+    // "apple" を含む銘柄のみ返されること（case-insensitive）
+    result.forEach((item) => {
+      const match =
+        item.name.toLowerCase().includes("apple") ||
+        item.symbol.toLowerCase().includes("apple");
+      expect(match).toBe(true);
+    });
   });
 });

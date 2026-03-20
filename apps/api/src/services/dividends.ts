@@ -112,7 +112,9 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
   const totalValue = holdings.reduce((a, h) => a + h.valueJpy, 0);
   const portfolioYieldPct = totalValue > 0 ? (totalAnnualEstJpy / totalValue) * 100 : 0;
 
-  const monthlyBreakdown = buildMonthlyBreakdown(holdingsResult);
+  const monthlyBreakdown = buildMonthlyBreakdown(
+    holdingsResult.map((h) => ({ ...h, nextExDate: h.nextExDate ?? null }))
+  );
 
   // 30日以上前の過去日付は除外（Yahoo Finance のスタールデータを除去）
   const cutoff = new Date();
