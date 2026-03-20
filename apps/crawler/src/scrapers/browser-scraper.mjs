@@ -26,6 +26,32 @@ const CATEGORY_MAP = {
   "ポイント・マイル": "POINT",
 };
 
+function buildColMap(headers) {
+  const colMap = {
+    name: -1,
+    quantity: -1,
+    costPerUnit: -1,
+    currentPrice: -1,
+    value: -1,
+    unrealizedPnl: -1,
+    unrealizedPnlRate: -1,
+  };
+  if (!headers || headers.length === 0) return colMap;
+
+  headers.forEach((h, i) => {
+    if (!h) return;
+    if (h.includes('銘柄') || h.includes('名称')) colMap.name = i;
+    if (h.includes('保有数') || h.includes('数量')) colMap.quantity = i;
+    if (h.includes('取得単価')) colMap.costPerUnit = i;
+    if (h.includes('現在値') || h.includes('現在価格')) colMap.currentPrice = i;
+    if (h.includes('評価額') && !h.includes('損益')) colMap.value = i;
+    if (h.includes('損益額') || (h.includes('損益') && !h.includes('率') && !h.includes('%'))) colMap.unrealizedPnl = i;
+    if (h.includes('損益率') || h.includes('損益(%)')) colMap.unrealizedPnlRate = i;
+  });
+
+  return colMap;
+}
+
 function detectAssetType(symbol) {
   if (!symbol) return "CASH";
   if (/^\d{4,5}$/.test(symbol)) return "STOCK_JP";
@@ -450,6 +476,43 @@ async function scrapePortfolio(page) {
     process.stderr.write(`[browser-scraper] first 3 rows: ${JSON.stringify(tableData.slice(0, 3))}\n`);
   }
 
+  // ヘッダー取得 → デバッグ出力 → colMap 構築
+  let _headers = [];
+  try {
+    _headers = await page.$$eval('table.table-portfolio thead th', ths =>
+      ths.map(th => th.textContent?.trim())
+    );
+    process.stderr.write(`[DEBUG HEADERS] ${JSON.stringify(_headers)}\n`);
+  } catch (e) {
+    try {
+      _headers = await page.$$eval('table thead th', ths =>
+        ths.map(th => th.textContent?.trim())
+      );
+      process.stderr.write(`[DEBUG HEADERS fallback] ${JSON.stringify(_headers)}\n`);
+    } catch (e2) {
+      process.stderr.write(`[DEBUG HEADERS error] ${e2.message}\n`);
+    }
+  }
+  let colMap = buildColMap(_headers);
+
+  // CSS セレクタでヘッダーが取得できなかった場合、tableData の最初の count=13 行をヘッダーとして試みる
+  if (colMap.quantity < 0) {
+    const headerRow = tableData.find(r => r.cellTexts.length >= 13 && r.cellTexts.some(c => c.includes('保有数') || c.includes('銘柄')));
+    if (headerRow) {
+      colMap = buildColMap(headerRow.cellTexts);
+      process.stderr.write(`[DEBUG HEADERS fallback from tableData] ${JSON.stringify(headerRow.cellTexts)}\n`);
+    }
+  }
+
+  process.stderr.write(`[DEBUG COLMAP] ${JSON.stringify(colMap)}\n`);
+
+  const quantityIdx = colMap.quantity >= 0 ? colMap.quantity : 2;
+  const costPerUnitIdx = colMap.costPerUnit >= 0 ? colMap.costPerUnit : 3;
+  const valueIdx = colMap.value >= 0 ? colMap.value : 5;
+  const unrealizedPnlIdx = colMap.unrealizedPnl >= 0 ? colMap.unrealizedPnl : 7;
+
+  let stockDebugCount = 0;
+
   for (const { cellTexts, thAnchorText } of tableData) {
     const count = cellTexts.length;
 
@@ -465,18 +528,17 @@ async function scrapePortfolio(page) {
         if (assetType) categories[assetType] = parseAmount(tdText);
       }
     } else if (count >= 13) {
-      // DEBUG: 最初の3件のみセル数をログ
-      if (holdings.length < 3) {
-        process.stderr.write(`[DEBUG] row with count=${count}, cellTexts.length=${cellTexts.length}, first 3 cells: [${cellTexts.slice(0, 3).map(c => `"${c}"`).join(', ')}]\n`);
+      if (stockDebugCount < 5) {
+        process.stderr.write(`[DEBUG STOCK ROW] count=${cellTexts.length}, cells=${JSON.stringify(cellTexts)}\n`);
+        stockDebugCount++;
       }
-      // MF 株式テーブル構造:
+      // MF 株式テーブル構造 (動的インデックス):
       //   td[0]: 銘柄コード（例: "1605", "AMD", "ASTS"）
       //   td[1]: 銘柄名（例: "INPEX", "アドバンスト マイクロ デバイシズ"）
-      //   td[4]: 保有数, td[5]: 評価額, td[6]: 取得単価, td[7]: 含み損益額
       const codeCandidate = (cellTexts[0] ?? "").replace(/\s/g, "");
       const name = cellTexts[1] ?? "";
-      const valueJpy = parseAmount(cellTexts[5] ?? "0");
-      const unrealizedPnlJpy = parseAmount(cellTexts[7] ?? "0");
+      const valueJpy = parseAmount(cellTexts[valueIdx] ?? "0");
+      const unrealizedPnlJpy = parseAmount(cellTexts[unrealizedPnlIdx] ?? "0");
       if (name && valueJpy > 0) {
         // td[0] が銘柄コードらしい（英数字のみ）場合はそれを優先
         // そうでなければ銘柄名から括弧内シンボルを抽出、最後の手段は銘柄名の先頭10文字
@@ -489,20 +551,8 @@ async function scrapePortfolio(page) {
           const symbolMatch = name.match(/[（(]([A-Z0-9]{1,8})[）)]/);
           symbol = symbolMatch ? symbolMatch[1] : codeCandidate || name.slice(0, 10).replace(/\s/g, "");
         }
-        const quantity = parseAmount(cellTexts[4] ?? "0");
-        // 取得単価の取得（[6] から直接、なければ含み損益額 [7] から逆算）
-        // 逆算式: 取得単価 = (評価額 - 含み損益額) / 数量
-        let costPerUnitJpy = parseAmount(cellTexts[6] ?? "0");
-        // DEBUG: 最初の3件のみログ出力
-        if (holdings.length < 3) {
-          process.stderr.write(`[DEBUG] ${name}: cellTexts[6]="${cellTexts[6]}", costPerUnitJpy=${costPerUnitJpy}, quantity=${quantity}, valueJpy=${valueJpy}, unrealizedPnlJpy=${unrealizedPnlJpy}\n`);
-        }
-        if (costPerUnitJpy === 0 && quantity > 0) {
-          costPerUnitJpy = (valueJpy - unrealizedPnlJpy) / quantity;
-          if (holdings.length < 3) {
-            process.stderr.write(`[DEBUG] ${name}: cost fallback -> ${costPerUnitJpy}\n`);
-          }
-        }
+        const quantity = parseAmount(cellTexts[quantityIdx] ?? "0");
+        const costPerUnitJpy = parseAmount(cellTexts[costPerUnitIdx] ?? "0");
         const priceJpy = quantity > 0 ? valueJpy / quantity : 0;
         const costBasisJpy = costPerUnitJpy * quantity;
         holdings.push({
