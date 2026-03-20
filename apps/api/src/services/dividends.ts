@@ -60,21 +60,66 @@ async function fetchDividendData(symbol: string, _assetType: string): Promise<Yf
 }
 
 export function buildMonthlyBreakdown(
-  holdings: { annualEstJpy: number; nextExDate: string | null; assetType: string }[]
+  holdings: { 
+    annualEstJpy: number; 
+    nextExDate: string | null; 
+    assetType: string;
+    dividendFrequency?: string | null;
+    nextExDividendDate?: string | null;
+  }[]
 ): number[] {
   const monthly = Array(12).fill(0) as number[];
   for (const h of holdings) {
     if (h.annualEstJpy <= 0) continue;
 
     if (h.assetType === "FUND") {
-      if (h.nextExDate) {
-        // 年1回分配型(nextExDateあり): 分配月にのみ全額を計上
-        const exMonth = parseInt(h.nextExDate.split("-")[1], 10) - 1;
-        monthly[exMonth] += h.annualEstJpy;
-      } else {
-        // 毎月分配型(nextExDateなし): 全12ヶ月均等
+      const freq = (h.dividendFrequency ?? "").toLowerCase();
+      
+      if (freq === "monthly") {
         for (let m = 0; m < 12; m++) {
           monthly[m] += h.annualEstJpy / 12;
+        }
+      } else if (freq === "annual" || freq === "yearly") {
+        const dateStr = h.nextExDividendDate ?? h.nextExDate;
+        if (dateStr) {
+          const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
+          monthly[exMonth] += h.annualEstJpy;
+        } else {
+          monthly[2] += h.annualEstJpy; // 3月フォールバック
+        }
+      } else if (freq === "semi-annual") {
+        const dateStr = h.nextExDividendDate ?? h.nextExDate;
+        if (dateStr) {
+          const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
+          monthly[exMonth] += h.annualEstJpy / 2;
+          monthly[(exMonth + 6) % 12] += h.annualEstJpy / 2;
+        } else {
+          monthly[2] += h.annualEstJpy / 2;  // 3月
+          monthly[8] += h.annualEstJpy / 2;  // 9月
+        }
+      } else if (freq === "quarterly") {
+        const dateStr = h.nextExDividendDate ?? h.nextExDate;
+        if (dateStr) {
+          const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
+          for (let i = 0; i < 4; i++) {
+            monthly[(exMonth + i * 3) % 12] += h.annualEstJpy / 4;
+          }
+        } else {
+          monthly[2]  += h.annualEstJpy / 4;
+          monthly[5]  += h.annualEstJpy / 4;
+          monthly[8]  += h.annualEstJpy / 4;
+          monthly[11] += h.annualEstJpy / 4;
+        }
+      } else {
+        // freq 不明: nextExDate で年1回 or フォールバックで毎月分配
+        const dateStr = h.nextExDividendDate ?? h.nextExDate;
+        if (dateStr) {
+          const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
+          monthly[exMonth] += h.annualEstJpy;
+        } else {
+          for (let m = 0; m < 12; m++) {
+            monthly[m] += h.annualEstJpy / 12;
+          }
         }
       }
     } else if (h.nextExDate) {
@@ -141,6 +186,8 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
         : h.valueJpy * (h.yieldPct / 100),
       yieldPct: h.yieldPct,
       nextExDate: h.nextExDate,
+      dividendFrequency: h.dividendFrequency,        // DB から
+      nextExDividendDate: h.nextExDividendDate,      // DB から
     }));
 
   const totalAnnualEstJpy = holdingsResult.reduce((a, h) => a + h.annualEstJpy, 0);
@@ -148,7 +195,12 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
   const portfolioYieldPct = totalValue > 0 ? (totalAnnualEstJpy / totalValue) * 100 : 0;
 
   const monthlyBreakdown = buildMonthlyBreakdown(
-    holdingsResult.map((h) => ({ ...h, nextExDate: h.nextExDate ?? null }))
+    holdingsResult.map((h) => ({ 
+      ...h, 
+      nextExDate: h.nextExDate ?? null,
+      dividendFrequency: h.dividendFrequency ?? null,
+      nextExDividendDate: h.nextExDividendDate ?? null,
+    }))
   );
 
   // 30日以上前の過去日付は除外（Yahoo Finance のスタールデータを除去）

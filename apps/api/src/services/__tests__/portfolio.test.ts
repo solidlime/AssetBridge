@@ -78,6 +78,10 @@ function makeRow(overrides: {
   quantity?: number;
   priceJpy?: number;
   costPerUnitJpy?: number;
+  dividendFrequency?: string | null;
+  dividendAmount?: number | null;
+  dividendRate?: number | null;
+  nextExDividendDate?: string | null;
 }) {
   return {
     portfolio_snapshots: {
@@ -89,11 +93,17 @@ function makeRow(overrides: {
       unrealizedPnlJpy: overrides.unrealizedPnlJpy ?? 2000,
       unrealizedPnlPct: overrides.unrealizedPnlPct ?? 25.0,
       quantity: overrides.quantity ?? 10,
+      dividendFrequency: overrides.dividendFrequency ?? null,
+      dividendAmount: overrides.dividendAmount ?? null,
+      dividendRate: overrides.dividendRate ?? null,
+      nextExDividendDate: overrides.nextExDividendDate ?? null,
     },
     assets: {
       symbol: overrides.symbol ?? "AAPL",
       name: overrides.name ?? "Apple Inc.",
       assetType: overrides.assetType ?? "STOCK_US",
+      currency: "JPY",
+      institutionName: null,
     },
   };
 }
@@ -251,3 +261,4 @@ describe("getHoldings integration", () => {
     });
   });
 });
+

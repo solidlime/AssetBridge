@@ -16,12 +16,17 @@ type DbRow = {
     unrealizedPnlJpy: number;
     unrealizedPnlPct: number;
     quantity: number;
+    dividendFrequency: string | null;
+    dividendAmount: number | null;
+    dividendRate: number | null;
+    nextExDividendDate: string | null;
   };
   assets: {
     symbol: string;
     name: string;
     assetType: string;
     currency: string;
+    institutionName: string | null;
   };
 };
 
@@ -110,6 +115,11 @@ export function mapToHoldingItems(
       valueDiffJpy,
       valueDiffPct,
       priceDiffPct: quotes.get(r.assets.symbol) ?? null,
+      dividendFrequency: r.portfolio_snapshots.dividendFrequency ?? undefined,
+      dividendAmount: r.portfolio_snapshots.dividendAmount ?? undefined,
+      dividendRate: r.portfolio_snapshots.dividendRate ?? undefined,
+      nextExDividendDate: r.portfolio_snapshots.nextExDividendDate ?? undefined,
+      institutionName: r.assets.institutionName ?? undefined,
     };
   });
 }
@@ -246,12 +256,17 @@ export async function getHoldings(filter: {
         unrealizedPnlJpy: portfolioSnapshots.unrealizedPnlJpy,
         unrealizedPnlPct: portfolioSnapshots.unrealizedPnlPct,
         quantity: portfolioSnapshots.quantity,
+        dividendFrequency: portfolioSnapshots.dividendFrequency,
+        dividendAmount: portfolioSnapshots.dividendAmount,
+        dividendRate: portfolioSnapshots.dividendRate,
+        nextExDividendDate: portfolioSnapshots.nextExDividendDate,
       },
       assets: {
         symbol: assets.symbol,
         name: assets.name,
         assetType: assets.assetType,
         currency: assets.currency,
+        institutionName: assets.institutionName,
       },
     })
     .from(portfolioSnapshots)

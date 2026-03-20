@@ -38,6 +38,11 @@ export interface HoldingItem {
   valueDiffJpy: number | null;
   valueDiffPct: number | null;
   priceDiffPct: number | null;
+  dividendFrequency?: string;        // "monthly" | "quarterly" | "semi-annual" | "annual"
+  dividendAmount?: number;
+  dividendRate?: number;
+  nextExDividendDate?: string;       // YYYY-MM-DD
+  institutionName?: string;
 }
 
 export interface DailyTotal {
@@ -81,6 +86,8 @@ export interface DividendHolding {
   annualEstJpy: number;
   yieldPct: number;
   nextExDate?: string;
+  dividendFrequency?: string;
+  nextExDividendDate?: string;
 }
 
 export interface DividendCalendar {
