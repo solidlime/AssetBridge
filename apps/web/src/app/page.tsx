@@ -46,21 +46,22 @@ function daysUntil(dateStr: string): number {
 }
 
 async function getData() {
-  const [snapshot, history, withdrawals] = await Promise.allSettled([
+  const [snapshot, withdrawals] = await Promise.allSettled([
     trpc.portfolio.snapshot.query({}),
-    trpc.portfolio.history.query({ days: 30 }),
     trpc.incomeExpense.upcomingWithdrawals.query({ days: 60 }),
   ]);
 
   return {
     snapshot: snapshot.status === "fulfilled" ? snapshot.value : null,
-    history: history.status === "fulfilled" ? history.value : [],
-    withdrawals: withdrawals.status === "fulfilled" ? withdrawals.value : { withdrawals: [], totalAmountJpy: 0, count: 0 },
+    withdrawals:
+      withdrawals.status === "fulfilled"
+        ? withdrawals.value
+        : { withdrawals: [], totalAmountJpy: 0, count: 0 },
   };
 }
 
 export default async function DashboardPage() {
-  const { snapshot, history, withdrawals } = await getData();
+  const { snapshot, withdrawals } = await getData();
   const diffJpy = snapshot?.prevDiffJpy ?? 0;
   const diffPct = snapshot?.prevDiffPct ?? 0;
   const sign = diffJpy >= 0 ? "+" : "";
@@ -115,13 +116,11 @@ export default async function DashboardPage() {
         ))}
       </div>
 
-      {/* 30日資産推移グラフ */}
-      {Array.isArray(history) && history.length > 0 && (
-        <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>資産推移</h2>
-          <AssetHistoryChart data={history as any} />
-        </div>
-      )}
+      {/* 資産推移グラフ（期間はコンポーネント内で自律取得） */}
+      <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>資産推移</h2>
+        <AssetHistoryChart />
+      </div>
 
       {/* アセット配分 */}
       <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
