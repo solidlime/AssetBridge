@@ -229,7 +229,19 @@ export function parseCardBlock(blockText) {
     }
   }
 
-  return { cardName: cardName.slice(0, 100), withdrawalDate, amountJpy, status: 'scheduled' };
+  // 引き落とし口座: 2段階 regex で抽出
+  let bankAccount = undefined;
+  const bankStep1 = blockText.match(/引き落とし|ご返済.*?(?:口座|銀行)[\s：:]*([^\n※]+)/i);
+  if (bankStep1?.[1]) {
+    bankAccount = bankStep1[1].trim() || undefined;
+  } else {
+    const bankStep2 = blockText.match(/([^\n]*銀行[^\n]*)/i);
+    if (bankStep2?.[1]) {
+      bankAccount = bankStep2[1].trim() || undefined;
+    }
+  }
+
+  return { cardName: cardName.slice(0, 100), withdrawalDate, amountJpy, status: 'scheduled', bankAccount };
 }
 
 /**

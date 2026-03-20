@@ -46,6 +46,7 @@ export interface ScrapedCreditWithdrawal {
   withdrawalDate: string;  // YYYY-MM-DD
   amountJpy: number;
   status: "scheduled" | "withdrawn";
+  bankAccount?: string;
 }
 
 export interface ScrapedData {
@@ -239,6 +240,51 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
     data.categories["STOCK_JP"] = data.categories["STOCK_JP"] - data.categories["STOCK_US"];
   }
 
+  // PENSION/POINT の合計額をダミーレコードとして追加
+  if (data.categories.PENSION && data.categories.PENSION > 0) {
+    deduplicatedHoldings.push({
+      symbol: "",
+      name: "年金（合計）",
+      assetType: "PENSION" as AssetType,
+      valueJpy: data.categories.PENSION,
+      quantity: 1,
+      priceJpy: data.categories.PENSION,
+      costBasisJpy: data.categories.PENSION,
+      costPerUnitJpy: data.categories.PENSION,
+      unrealizedPnlJpy: 0,
+      institutionName: "確定拠出年金・iDeCo",
+      dividendFrequency: null,
+      dividendAmount: null,
+      dividendRate: null,
+      exDividendDate: null,
+      nextExDividendDate: null,
+      distributionType: null,
+      lastDividendUpdate: null,
+    });
+  }
+
+  if (data.categories.POINT && data.categories.POINT > 0) {
+    deduplicatedHoldings.push({
+      symbol: "",
+      name: "ポイント・マイル（合計）",
+      assetType: "POINT" as AssetType,
+      valueJpy: data.categories.POINT,
+      quantity: data.categories.POINT,
+      priceJpy: 1,
+      costBasisJpy: data.categories.POINT,
+      costPerUnitJpy: 1,
+      unrealizedPnlJpy: 0,
+      institutionName: "ポイント・マイル",
+      dividendFrequency: null,
+      dividendAmount: null,
+      dividendRate: null,
+      exDividendDate: null,
+      nextExDividendDate: null,
+      distributionType: null,
+      lastDividendUpdate: null,
+    });
+  }
+
   for (const h of deduplicatedHoldings) {
     const assetId = assetsRepo.upsert({
       symbol: h.symbol || h.name.slice(0, 50),
@@ -313,6 +359,7 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
           withdrawalDate: w.withdrawalDate,
           amountJpy: w.amountJpy,
           status: w.status,
+          bankAccount: (w.bankAccount?.trim() || null),
           scrapedAt,
         })
         .run();
