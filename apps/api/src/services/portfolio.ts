@@ -21,6 +21,7 @@ type DbRow = {
     symbol: string;
     name: string;
     assetType: string;
+    currency: string;
   };
 };
 
@@ -96,6 +97,7 @@ export function mapToHoldingItems(
       symbol: r.assets.symbol,
       name: r.assets.name,
       assetType: r.assets.assetType as AssetType,
+      currency: r.assets.currency,
       valueJpy: r.portfolio_snapshots.valueJpy,
       costBasisJpy: r.portfolio_snapshots.costBasisJpy,
       unrealizedPnlJpy: r.portfolio_snapshots.unrealizedPnlJpy,

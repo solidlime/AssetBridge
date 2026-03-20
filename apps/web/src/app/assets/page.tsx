@@ -20,6 +20,7 @@ type Holding = {
   unrealizedPnlJpy: number;
   unrealizedPnlPct: number;
   assetType: string;
+  currency: string;
   portfolioWeightPct: number;
   valueDiffJpy: number | null;
   valueDiffPct: number | null;
@@ -42,6 +43,16 @@ const TYPES = [
   { value: "pension", label: "年金" },
   { value: "point", label: "ポイント" },
 ] as const;
+
+// ---------------------------------------------------------------------------
+// 通貨対応フォーマット
+// ---------------------------------------------------------------------------
+
+function formatPrice(value: number, currency: string): string {
+  if (currency === "USD") return `$${value.toFixed(2)}`;
+  if (currency === "JPY") return formatJpy(value);
+  return `${currency} ${value.toFixed(2)}`;
+}
 
 // ---------------------------------------------------------------------------
 // ソートアイコン
@@ -168,8 +179,8 @@ function AssetModal({ holding, onClose }: ModalProps) {
           {[
             { label: "評価額", value: formatJpy(holding.valueJpy) },
             { label: "数量", value: String(holding.quantity) },
-            { label: "現在価格", value: formatJpy(holding.priceJpy) },
-            { label: "取得単価", value: formatJpy(holding.costPerUnitJpy) },
+            { label: "現在価格", value: formatPrice(holding.priceJpy, holding.currency) },
+            { label: "取得単価", value: formatPrice(holding.costPerUnitJpy, holding.currency) },
             { label: "含み損益", value: `${pnlSign}${formatJpy(Math.abs(holding.unrealizedPnlJpy))}`, color: pnlColor },
             { label: "損益率", value: `${pnlSign}${holding.unrealizedPnlPct.toFixed(2)}%`, color: pnlColor },
           ].map(({ label, value, color }) => (
@@ -235,6 +246,7 @@ function AssetsPageInner() {
                 unrealizedPnlJpy: item.unrealizedPnlJpy,
                 unrealizedPnlPct: item.unrealizedPnlPct,
                 assetType: item.assetType,
+                currency: item.currency ?? "JPY",
                 portfolioWeightPct: item.portfolioWeightPct,
                 valueDiffJpy: (item as { valueDiffJpy?: number | null }).valueDiffJpy ?? null,
                 valueDiffPct: (item as { valueDiffPct?: number | null }).valueDiffPct ?? null,
@@ -417,7 +429,7 @@ function AssetsPageInner() {
                       <div style={{ fontSize: 12, color: "#94a3b8" }}>{h.name}</div>
                     </td>
                     <td style={{ textAlign: "right", padding: "10px 0" }}>{h.quantity}</td>
-                    <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(h.costPerUnitJpy)}</td>
+                    <td style={{ textAlign: "right", padding: "10px 0" }}>{formatPrice(h.costPerUnitJpy, h.currency)}</td>
                     <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(h.valueJpy)}</td>
                     <td style={{ textAlign: "right", padding: "10px 0", color: pnlColor }}>
                       {pnlSign}{formatJpy(Math.abs(h.unrealizedPnlJpy))}

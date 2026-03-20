@@ -26,6 +26,7 @@ export interface HoldingItem {
   symbol: string;
   name: string;
   assetType: AssetType;
+  currency: string;
   valueJpy: number;
   costBasisJpy: number;
   unrealizedPnlJpy: number;
@@ -34,6 +35,9 @@ export interface HoldingItem {
   quantity: number;
   priceJpy: number;
   costPerUnitJpy: number;
+  valueDiffJpy: number | null;
+  valueDiffPct: number | null;
+  priceDiffPct: number | null;
 }
 
 export interface DailyTotal {
