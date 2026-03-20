@@ -8,6 +8,7 @@ export const assets = sqliteTable("assets", {
   name:      text("name", { length: 200 }).notNull(),
   assetType: text("asset_type").notNull().$type<AssetType>(),
   exchange:  text("exchange", { length: 50 }),
-  currency:  text("currency", { length: 10 }).notNull().default("JPY"),
-  createdAt: integer("created_at", { mode: "timestamp" }).default(sql`(unixepoch())`),
+  currency:        text("currency", { length: 10 }).notNull().default("JPY"),
+  institutionName: text("institution_name", { length: 200 }),
+  createdAt:       integer("created_at", { mode: "timestamp" }).default(sql`(unixepoch())`),
 }, (t) => [uniqueIndex("uq_symbol_type").on(t.symbol, t.assetType)]);

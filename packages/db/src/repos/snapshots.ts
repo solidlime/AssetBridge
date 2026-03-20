@@ -18,6 +18,13 @@ export class SnapshotsRepo {
           costPerUnitJpy: data.costPerUnitJpy,
           unrealizedPnlJpy: data.unrealizedPnlJpy,
           unrealizedPnlPct: data.unrealizedPnlPct,
+          dividendFrequency: data.dividendFrequency,
+          dividendAmount: data.dividendAmount,
+          dividendRate: data.dividendRate,
+          exDividendDate: data.exDividendDate,
+          nextExDividendDate: data.nextExDividendDate,
+          distributionType: data.distributionType,
+          lastDividendUpdate: data.lastDividendUpdate,
         },
       })
       .run();

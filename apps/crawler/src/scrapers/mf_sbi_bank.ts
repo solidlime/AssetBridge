@@ -31,6 +31,14 @@ export interface ScrapedHolding {
   priceJpy: number;
   costBasisJpy: number;
   costPerUnitJpy: number;
+  institutionName?: string | null;
+  dividendFrequency?: string | null;
+  dividendAmount?: number | null;
+  dividendRate?: number | null;
+  exDividendDate?: string | null;
+  nextExDividendDate?: string | null;
+  distributionType?: string | null;
+  lastDividendUpdate?: number | null;
 }
 
 export interface ScrapedCreditWithdrawal {
@@ -237,6 +245,7 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
       name: h.name,
       assetType: h.assetType,
       currency: h.assetType === "STOCK_US" ? "USD" : "JPY",
+      institutionName: h.institutionName ?? null,
     });
     // unrealizedPnlPct: costBasisJpy がある場合はコスト基準、なければ valueJpy 基準で計算
     // (MF は取得単価を提供しないケースが多いため valueJpy ベースをフォールバックとして使用)
@@ -256,6 +265,13 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
       costPerUnitJpy: h.costPerUnitJpy,
       unrealizedPnlJpy: h.unrealizedPnlJpy,
       unrealizedPnlPct,
+      dividendFrequency: h.dividendFrequency ?? null,
+      dividendAmount: h.dividendAmount ?? null,
+      dividendRate: h.dividendRate ?? null,
+      exDividendDate: h.exDividendDate ?? null,
+      nextExDividendDate: h.nextExDividendDate ?? null,
+      distributionType: h.distributionType ?? null,
+      lastDividendUpdate: h.lastDividendUpdate ?? null,
     });
   }
 

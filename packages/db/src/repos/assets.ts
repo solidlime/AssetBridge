@@ -12,6 +12,7 @@ export class AssetsRepo {
     assetType: AssetType;
     exchange?: string;
     currency?: string;
+    institutionName?: string | null;
   }): number {
     // symbol + assetType の複合ユニーク制約に従い、既存行があれば更新
     const existing = this.db.select().from(assets)
@@ -20,7 +21,7 @@ export class AssetsRepo {
 
     if (existing) {
       this.db.update(assets)
-        .set({ name: data.name, exchange: data.exchange, currency: data.currency ?? existing.currency })
+        .set({ name: data.name, exchange: data.exchange, currency: data.currency ?? existing.currency, institutionName: data.institutionName ?? existing.institutionName })
         .where(eq(assets.id, existing.id))
         .run();
       return existing.id;

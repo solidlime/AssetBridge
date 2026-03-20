@@ -6,6 +6,7 @@ export const creditCardWithdrawals = sqliteTable("credit_card_withdrawals", {
   cardName:       text("card_name").notNull(),
   withdrawalDate: text("withdrawal_date").notNull(),  // YYYY-MM-DD
   amountJpy:      real("amount_jpy").notNull().default(0),
+  bankAccount:    text("bank_account"),
   status:         text("status").notNull().default("scheduled").$type<"scheduled" | "withdrawn">(),
   scrapedAt:      text("scraped_at").notNull().default(sql`(datetime('now'))`),
 }, (t) => [

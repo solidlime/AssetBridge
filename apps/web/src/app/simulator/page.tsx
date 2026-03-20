@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import SimulatorChart from "@/components/charts/SimulatorChart";
 import { formatJpy } from "@/lib/format";
@@ -16,7 +16,20 @@ export default function SimulatorPage() {
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
-  // API レスポンスの yearLabels + percentiles を SimulatorChart 用の配列に変換
+  // 総資産を取得して初期資産の初期値に設定
+  useEffect(() => {
+    trpc.portfolio.snapshot.query({})
+      .then((data) => {
+        if (data?.totalJpy && data.totalJpy > 0) {
+          setParams((p) => ({ ...p, initial: Math.round(data.totalJpy) }));
+        }
+      })
+      .catch(() => {
+        // 取得失敗時はデフォルト値 (1,000,000) を使用
+      });
+  }, []);
+
+  // API レスポンスの yearLabels+ percentiles を SimulatorChart 用の配列に変換
   const chartData = result
     ? (result.yearLabels ?? []).map((year: number, i: number) => ({
         year,

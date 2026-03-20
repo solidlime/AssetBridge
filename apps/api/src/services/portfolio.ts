@@ -236,7 +236,24 @@ export async function getHoldings(filter: {
       .get()?.totalJpy ?? 0;
 
   const rows = db
-    .select()
+    .select({
+      portfolio_snapshots: {
+        assetId: portfolioSnapshots.assetId,
+        priceJpy: portfolioSnapshots.priceJpy,
+        valueJpy: portfolioSnapshots.valueJpy,
+        costBasisJpy: portfolioSnapshots.costBasisJpy,
+        costPerUnitJpy: portfolioSnapshots.costPerUnitJpy,
+        unrealizedPnlJpy: portfolioSnapshots.unrealizedPnlJpy,
+        unrealizedPnlPct: portfolioSnapshots.unrealizedPnlPct,
+        quantity: portfolioSnapshots.quantity,
+      },
+      assets: {
+        symbol: assets.symbol,
+        name: assets.name,
+        assetType: assets.assetType,
+        currency: assets.currency,
+      },
+    })
     .from(portfolioSnapshots)
     .innerJoin(assets, eq(portfolioSnapshots.assetId, assets.id))
     .where(eq(portfolioSnapshots.date, latestDate))

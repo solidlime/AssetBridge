@@ -557,6 +557,7 @@ async function scrapePortfolio(page) {
   let stockDebugCount = 0;
 
   let currentInstitution = "";
+  let lastCashInstitution = ""; // CASH専用: POINTセクション通過後の汚染を防ぐ
   let currentCategory = "CASH";
 
   for (const { cellTexts, thAnchorText } of tableData) {
@@ -574,14 +575,17 @@ async function scrapePortfolio(page) {
           categories[assetType] = parseAmount(tdText);
           currentCategory = assetType;
           currentInstitution = "";
+          lastCashInstitution = "";
         } else {
           // CATEGORY_MAP にない th>a（機関名リンクなど）は機関名として追跡
           currentInstitution = catName;
+          lastCashInstitution = catName;
         }
       } else {
         const possibleInstitution = (cellTexts[0] ?? "").trim();
         if (possibleInstitution) {
           currentInstitution = possibleInstitution;
+          lastCashInstitution = possibleInstitution;
         }
       }
     } else if (count >= 13) {
@@ -596,7 +600,12 @@ async function scrapePortfolio(page) {
       const name = cellTexts[1] ?? "";
       const valueJpy = parseAmount(cellTexts[valueIdx] ?? "0");
       const unrealizedPnlJpy = parseAmount(cellTexts[unrealizedPnlIdx] ?? "0");
-      if (name && valueJpy > 0) {
+      // ゴミ行フィルタ: 銘柄名が意味のある文字列（ページネーション要素などを除外）
+      const nameIsValid = name.length > 1 
+        && !name.startsWith('\u2039') && !name.startsWith('\u203A')
+        && !name.startsWith('<') && !name.startsWith('>')
+        && !codeCandidate.startsWith('\u2039') && !codeCandidate.startsWith('\u203A');
+      if (name && valueJpy > 0 && nameIsValid) {
         // td[0] が銘柄コードらしい（英数字のみ）場合はそれを優先
         // そうでなければ銘柄名から括弧内シンボルを抽出、最後の手段は銘柄名の先頭10文字
         let symbol;
@@ -606,7 +615,10 @@ async function scrapePortfolio(page) {
           symbol = codeCandidate;
         } else {
           const symbolMatch = name.match(/[（(]([A-Z0-9]{1,8})[）)]/);
-          symbol = symbolMatch ? symbolMatch[1] : codeCandidate || name.slice(0, 10).replace(/\s/g, "");
+          const safeCandidate = codeCandidate && !/[\u2039\u203A<>]/.test(codeCandidate)
+            ? codeCandidate
+            : null;
+          symbol = symbolMatch ? symbolMatch[1] : safeCandidate || name.slice(0, 10).replace(/\s/g, "");
         }
         const quantity = parseAmount(cellTexts[quantityIdx] ?? "0");
         const costPerUnitJpy = parseAmount(cellTexts[costPerUnitIdx] ?? "0");
@@ -623,6 +635,14 @@ async function scrapePortfolio(page) {
           assetType: resolvedType,
           valueJpy, unrealizedPnlJpy,
           quantity, priceJpy, costBasisJpy, costPerUnitJpy,
+          institutionName: currentInstitution || currentCategory,
+          dividendFrequency: null,
+          dividendAmount: null,
+          dividendRate: null,
+          exDividendDate: null,
+          nextExDividendDate: null,
+          distributionType: null,
+          lastDividendUpdate: null,
         });
       }
     } else if (count === 5) {
@@ -632,11 +652,19 @@ async function scrapePortfolio(page) {
         process.stderr.write(`[DEBUG] cash row: count=${count}, name="${name}", balance="${cellTexts[1]}"\n`);
       }
       if (name && balance > 0) {
-        const fullName = currentInstitution ? `${currentInstitution}[${name}]` : name;
+        const fullName = lastCashInstitution ? `${lastCashInstitution}[${name}]` : name;
         holdings.push({
-          symbol: "", name: fullName, assetType: "CASH",
+          symbol: "", name: fullName, assetType: currentCategory,
           valueJpy: balance, unrealizedPnlJpy: 0,
           quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
+          institutionName: currentInstitution || currentCategory,
+          dividendFrequency: null,
+          dividendAmount: null,
+          dividendRate: null,
+          exDividendDate: null,
+          nextExDividendDate: null,
+          distributionType: null,
+          lastDividendUpdate: null,
         });
       }
     } else if (count >= 6 && count < 13) {
@@ -659,6 +687,14 @@ async function scrapePortfolio(page) {
           symbol: "", name: fullName, assetType: currentCategory,
           valueJpy: balance, unrealizedPnlJpy: 0,
           quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
+          institutionName: currentInstitution || currentCategory,
+          dividendFrequency: null,
+          dividendAmount: null,
+          dividendRate: null,
+          exDividendDate: null,
+          nextExDividendDate: null,
+          distributionType: null,
+          lastDividendUpdate: null,
         });
       }
     }
