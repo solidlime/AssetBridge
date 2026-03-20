@@ -21,9 +21,12 @@ type Holding = {
   unrealizedPnlPct: number;
   assetType: string;
   portfolioWeightPct: number;
+  valueDiffJpy: number | null;
+  valueDiffPct: number | null;
+  priceDiffPct: number | null;
 };
 
-type SortKey = "name" | "quantity" | "valueJpy" | "unrealizedPnlJpy" | "unrealizedPnlPct";
+type SortKey = "name" | "quantity" | "valueJpy" | "unrealizedPnlJpy" | "unrealizedPnlPct" | "costPerUnitJpy" | "costBasisJpy" | "portfolioWeightPct" | "priceJpy" | "valueDiffJpy" | "priceDiffPct";
 type SortDir = "asc" | "desc";
 
 // ---------------------------------------------------------------------------
@@ -233,6 +236,9 @@ function AssetsPageInner() {
                 unrealizedPnlPct: item.unrealizedPnlPct,
                 assetType: item.assetType,
                 portfolioWeightPct: item.portfolioWeightPct,
+                valueDiffJpy: (item as { valueDiffJpy?: number | null }).valueDiffJpy ?? null,
+                valueDiffPct: (item as { valueDiffPct?: number | null }).valueDiffPct ?? null,
+                priceDiffPct: (item as { priceDiffPct?: number | null }).priceDiffPct ?? null,
               }))
             : [];
           setHoldings(mapped);
@@ -264,8 +270,8 @@ function AssetsPageInner() {
   );
 
   const sortedHoldings = [...holdings].sort((a, b) => {
-    let av: number | string;
-    let bv: number | string;
+    let av: number | string | null;
+    let bv: number | string | null;
 
     if (sortKey === "name") {
       av = a.name;
@@ -274,6 +280,10 @@ function AssetsPageInner() {
       av = a[sortKey];
       bv = b[sortKey];
     }
+
+    if (av === null && bv === null) return 0;
+    if (av === null) return 1;
+    if (bv === null) return -1;
 
     if (typeof av === "string" && typeof bv === "string") {
       return sortDir === "asc" ? av.localeCompare(bv, "ja") : bv.localeCompare(av, "ja");
@@ -359,10 +369,12 @@ function AssetsPageInner() {
               <tr style={{ color: "#94a3b8", borderBottom: "1px solid #334155" }}>
                 <SortHeader label="銘柄" sortKeyTarget="name" align="left" />
                 <SortHeader label="数量" sortKeyTarget="quantity" />
-                <th style={{ textAlign: "right", padding: "8px 0", whiteSpace: "nowrap", color: "#94a3b8" }}>取得単価</th>
+                <SortHeader label="取得単価" sortKeyTarget="costPerUnitJpy" />
                 <SortHeader label="評価額" sortKeyTarget="valueJpy" />
                 <SortHeader label="損益" sortKeyTarget="unrealizedPnlJpy" />
                 <SortHeader label="損益率" sortKeyTarget="unrealizedPnlPct" />
+                <SortHeader label="前日比(円)" sortKeyTarget="valueDiffJpy" />
+                <SortHeader label="前日比(%)" sortKeyTarget="priceDiffPct" />
               </tr>
             </thead>
             <tbody>
@@ -413,6 +425,15 @@ function AssetsPageInner() {
                     <td style={{ textAlign: "right", padding: "10px 0", color: pnlColor }}>
                       {formatPct(h.unrealizedPnlPct)}
                     </td>
+                    <td style={{ textAlign: "right", padding: "10px 0", color: h.valueDiffJpy === null ? "#94a3b8" : diffColor(h.valueDiffJpy) }}>
+                      {h.valueDiffJpy === null
+                        ? "—"
+                        : `${h.valueDiffJpy >= 0 ? "+" : ""}¥${Math.abs(Math.round(h.valueDiffJpy)).toLocaleString("ja-JP")}`}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "10px 0", color: h.priceDiffPct === null ? "#94a3b8" : diffColor(h.priceDiffPct) }}>
+                        {h.priceDiffPct === null ? "—" : formatPct(h.priceDiffPct)}
+                      </td>
+                   
                   </tr>
                 );
               })}
