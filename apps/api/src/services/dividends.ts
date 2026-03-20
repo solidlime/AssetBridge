@@ -81,6 +81,11 @@ export function buildMonthlyBreakdown(
       monthly[5]  += h.annualEstJpy / 4; // 6月
       monthly[8]  += h.annualEstJpy / 4; // 9月
       monthly[11] += h.annualEstJpy / 4; // 12月
+    } else if (h.assetType === "FUND") {
+      // 毎月分配型: 全12ヶ月均等
+      for (let m = 0; m < 12; m++) {
+        monthly[m] += h.annualEstJpy / 12;
+      }
     } else {
       // その他: 12ヶ月均等分配
       for (let m = 0; m < 12; m++) {
@@ -97,9 +102,9 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
   if (cached) return cached;
 
   const holdings = await getHoldings({ assetType: "all" });
-  // 株式のみ配当対象（投信・現金・年金・ポイントはスキップ）
+  // 株式・投信を配当対象に（現金・年金・ポイントはスキップ）
   const investmentHoldings = holdings.filter(
-    (h) => h.assetType === "STOCK_JP" || h.assetType === "STOCK_US"
+    (h) => h.assetType === "STOCK_JP" || h.assetType === "STOCK_US" || h.assetType === "FUND"
   );
 
   const dividendData = await Promise.all(
@@ -116,7 +121,9 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
       name: h.name,
       assetType: h.assetType,
       valueJpy: h.valueJpy,
-      annualEstJpy: h.valueJpy * (h.yieldPct / 100),
+      annualEstJpy: h.assetType === "FUND" && h.yieldPct === 0
+        ? h.valueJpy * 0.04
+        : h.valueJpy * (h.yieldPct / 100),
       yieldPct: h.yieldPct,
       nextExDate: h.nextExDate,
     }));
