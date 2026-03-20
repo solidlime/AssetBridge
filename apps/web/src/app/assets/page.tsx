@@ -25,6 +25,7 @@ type Holding = {
   valueDiffJpy: number | null;
   valueDiffPct: number | null;
   priceDiffPct: number | null;
+  institutionName?: string;
 };
 
 type SortKey = "name" | "quantity" | "valueJpy" | "unrealizedPnlJpy" | "unrealizedPnlPct" | "costPerUnitJpy" | "costBasisJpy" | "portfolioWeightPct" | "priceJpy" | "valueDiffJpy" | "priceDiffPct";
@@ -387,6 +388,7 @@ function AssetsPageInner() {
           >
             <thead>
               <tr style={{ color: "#94a3b8", borderBottom: "1px solid #334155" }}>
+                <th style={{ padding: "8px 12px", textAlign: "left" }}>機関</th>
                 <SortHeader label="銘柄" sortKeyTarget="name" align="left" />
                 <SortHeader label="数量" sortKeyTarget="quantity" />
                 <SortHeader label="取得単価" sortKeyTarget="costPerUnitJpy" />
@@ -432,6 +434,9 @@ function AssetsPageInner() {
                       (e.currentTarget as HTMLTableRowElement).style.background = "transparent";
                     }}
                   >
+                    <td style={{ padding: "8px 12px", color: "#94a3b8", fontSize: 13 }}>
+                      {h.institutionName || "－"}
+                    </td>
                     <td style={{ padding: "10px 0" }}>
                       <div style={{ fontWeight: 600 }}>{h.symbol}</div>
                       <div style={{ fontSize: 12, color: "#94a3b8" }}>{h.name}</div>
