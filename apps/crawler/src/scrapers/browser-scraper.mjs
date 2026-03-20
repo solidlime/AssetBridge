@@ -1,4 +1,4 @@
-/**
+﻿/**
  * browser-scraper.mjs — Node.js で動作する MF スクレイパー
  * Bun から Bun.spawn() で呼び出し、stdout で JSON 通信する
  *
@@ -21,8 +21,11 @@ const BASE_URL = "https://ssnb.x.moneyforward.com";
 const CATEGORY_MAP = {
   "預金・現金・暗号資産": "CASH",
   "株式（現物）": "STOCK_JP",
+  "外国株式": "STOCK_US",
   "投資信託": "FUND",
   "年金": "PENSION",
+  "確定拠出年金": "PENSION", // DC年金・企業型DCに対応
+  "iDeCo": "PENSION",       // 個人型確定拠出年金
   "ポイント・マイル": "POINT",
 };
 
@@ -56,6 +59,8 @@ function detectAssetType(symbol) {
   if (!symbol) return "CASH";
   if (/^\d{4,5}$/.test(symbol)) return "STOCK_JP";
   if (/^[A-Z]{1,6}$/.test(symbol)) return "STOCK_US";
+  // 日本ファンドコード: 英数字混在の4〜5文字（例: "314A", "2865B"）
+  if (/^[A-Z0-9]{4,5}$/.test(symbol) && /[A-Z]/.test(symbol) && /\d/.test(symbol)) return "FUND";
   if (/[A-Z0-9]{6,}/.test(symbol)) return "FUND";
   return "CASH";
 }
@@ -155,7 +160,15 @@ export function parseCardBlock(blockText) {
   let cardName = '不明';
   const cardLine = lines.find(l => l.includes('金融機関サービスサイトへ'));
   if (cardLine) {
-    cardName = cardLine.replace('金融機関サービスサイトへ', '').trim();
+    const sameLine = cardLine.replace('金融機関サービスサイトへ', '').trim();
+    if (sameLine) {
+      // 同行にカード名が含まれる場合（例: "SBIカード 金融機関サービスサイトへ"）
+      cardName = sameLine;
+    } else {
+      // 「金融機関サービスサイトへ」が単独行の場合、その前の行をカード名として使用
+      const anchorIdx = lines.findIndex(l => l.includes('金融機関サービスサイトへ'));
+      cardName = anchorIdx > 0 ? lines[anchorIdx - 1] : (lines[0] || '不明');
+    }
   }
   if (!cardName || cardName === '') return null;
 
@@ -186,7 +199,35 @@ export function parseCardBlock(blockText) {
     }
   }
 
-  if (amountJpy === null) return null; // null なら skip
+  // amountJpy が null の場合、引き落とし日がある行の前後から数値を再試行、それでも取れなければ 0 をデフォルト値として使用
+  if (amountJpy === null) {
+    if (withdrawalDate) {
+      const dateIdx = lines.findIndex(l => l.includes('引き落とし日:'));
+      // 前後2行の範囲で数値を探す
+      for (const offset of [-1, 1, -2, 2]) {
+        const idx = dateIdx + offset;
+        if (idx >= 0 && idx < lines.length) {
+          const m = lines[idx].match(/-?([\d,]+)/);
+          if (m) { amountJpy = parseCardAmount(m[1]); if (amountJpy !== null) break; }
+        }
+      }
+      // 引き落とし額の候補をより広く探す
+      if (amountJpy === null) {
+        for (const line of lines) {
+          if (line.includes('円') || /[\d,]{4,}/.test(line)) {
+            const m = line.replace(/,/g, '').match(/-?([\d]+)円?/);
+            if (m) {
+              const n = parseInt(m[1]);
+              if (n >= 100) { amountJpy = n; break; }
+            }
+          }
+        }
+      }
+      if (amountJpy === null) amountJpy = 0; // 引き落とし日がある場合のデフォルト値
+    } else {
+      return null; // 引き落とし日もなければスキップ
+    }
+  }
 
   return { cardName: cardName.slice(0, 100), withdrawalDate, amountJpy, status: 'scheduled' };
 }
@@ -210,7 +251,9 @@ export async function scrapeCardsByAnchor(page) {
       const cardAnchors = anchors.filter(a => a.textContent.includes('金融機関サービスサイトへ'));
       return cardAnchors.map(a => {
         // カード名はアンカーの親要素のテキスト or 直前のテキスト
-        const wrapper = a.closest('li, .account-item, .card-item, section, div') || a.parentElement;
+        const wrapper = a.closest('.account-item-detail-table, .account-item, li, section')
+          || a.parentElement?.closest('.account-item-detail-table, .account-item, li, section')
+          || a.parentElement;
         return wrapper ? wrapper.innerText : '';
       });
     });
@@ -519,10 +562,9 @@ async function scrapePortfolio(page) {
   for (const { cellTexts, thAnchorText } of tableData) {
     const count = cellTexts.length;
 
-    if (count === 2 || count === 3) {
-      if (holdings.length < 3) {
-        process.stderr.write(`[DEBUG] category row: count=${count}, text="${cellTexts[0]}"\n`);
-      }
+    if (count >= 2 && count <= 4) {
+      // DOM順序デバッグ: カテゴリ行を全て出力
+      process.stderr.write(`[DEBUG CAT] count=${count}, anchor="${thAnchorText}", text="${cellTexts[0]}", holdings=${holdings.length}\n`);
       if (thAnchorText) {
         const catName = thAnchorText;
         // cellTexts[0]=カテゴリ名(th), cellTexts[1]=金額(td), cellTexts[2]=割合(td)
@@ -532,6 +574,9 @@ async function scrapePortfolio(page) {
           categories[assetType] = parseAmount(tdText);
           currentCategory = assetType;
           currentInstitution = "";
+        } else {
+          // CATEGORY_MAP にない th>a（機関名リンクなど）は機関名として追跡
+          currentInstitution = catName;
         }
       } else {
         const possibleInstitution = (cellTexts[0] ?? "").trim();
@@ -567,9 +612,15 @@ async function scrapePortfolio(page) {
         const costPerUnitJpy = parseAmount(cellTexts[costPerUnitIdx] ?? "0");
         const priceJpy = quantity > 0 ? valueJpy / quantity : 0;
         const costBasisJpy = costPerUnitJpy * quantity;
+        // detectAssetType が CASH を返す場合のみ currentCategory で補正（FUND/PENSION/POINT 対応）
+        // STOCK_JP/STOCK_US は detectAssetType(symbol) で確定できるため変更しない
+        const detectedType = detectAssetType(symbol);
+        const resolvedType = (detectedType === 'CASH' && currentCategory !== 'CASH')
+          ? currentCategory
+          : detectedType;
         holdings.push({
           symbol, name,
-          assetType: detectAssetType(symbol),
+          assetType: resolvedType,
           valueJpy, unrealizedPnlJpy,
           quantity, priceJpy, costBasisJpy, costPerUnitJpy,
         });
@@ -581,6 +632,28 @@ async function scrapePortfolio(page) {
         process.stderr.write(`[DEBUG] cash row: count=${count}, name="${name}", balance="${cellTexts[1]}"\n`);
       }
       if (name && balance > 0) {
+        const fullName = currentInstitution ? `${currentInstitution}[${name}]` : name;
+        holdings.push({
+          symbol: "", name: fullName, assetType: "CASH",
+          valueJpy: balance, unrealizedPnlJpy: 0,
+          quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
+        });
+      }
+    } else if (count >= 6 && count < 13) {
+      // 投資信託・年金など中間列数の行（cashより多く、株式テーブルより少ない）
+      // 評価額は後ろから3列目を想定（損益率・損益額・評価額の並び）
+      const name = cellTexts[0] ?? "";
+      const valIdx = count - 3;
+      const balance = parseAmount(cellTexts[valIdx] ?? cellTexts[1] ?? "0");
+      if (holdings.length < 3) {
+        process.stderr.write(`[DEBUG] fund/pension row: count=${count}, name="${name}", balance="${cellTexts[valIdx]}"\n`);
+      }
+      // ゴミ行フィルタ: 名前が意味のある文字列のみ受け付ける
+      const isValidName = name.length > 1 
+        && !name.startsWith('\u2039')  // ‹ を除外
+        && !name.startsWith('<')
+        && !/^\s*$/.test(name);
+      if (name && balance > 0 && isValidName) {
         const fullName = currentInstitution ? `${currentInstitution}[${name}]` : name;
         holdings.push({
           symbol: "", name: fullName, assetType: currentCategory,
