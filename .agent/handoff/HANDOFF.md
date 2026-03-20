@@ -1,61 +1,35 @@
-# HANDOFF — 2026-03-14 (session 2)
+# HANDOFF — 2026-03-20
 
 ## 完了した作業
 
-### setup.ps1 起動問題の修正
+### テスト・リファクタ（Task 1〜9）
+- 49 tests / 0 fail（api:21, crawler:15, db:13）
+- type-check: 全6パッケージ PASS
 
-**根本原因**: `Invoke-WebRequest` が Windows のプロキシ設定に影響を受けてタイムアウト。
-FastAPI 自体は正常に起動していたが、ヘルスチェックが失敗して「FastAPI の起動を確認できませんでした」と表示されていた。
+### ドキュメント刷新
+- README.md 全面刷新、apps/*/README.md 新規作成
 
-**修正内容** (`scripts/setup.ps1`):
+### 3つのUIバグ修正
+1. **クレカ引き落とし未表示** → `apps/web/src/app/page.tsx` に `incomeExpense.upcomingWithdrawals` 呼び出し追加（commit: e26e381）
+2. **グラフ期間変更無効 + dataKey ミスマッチ** → `AssetHistoryChart` を Client Component 化、`useEffect` で再fetch、`totalJpy` に修正（commit: d27ac4a）
+3. **取得単価すべて0** → MF が cellTexts[6] を空で返す → `(評価額 - 含み損益) / 数量` で逆算フォールバック（commit: 6f52693）
+4. **brittle test 修正** → `>= 47` → `> 0`（commit: 直前）
 
-1. **ヘルスチェックを `curl.exe` + `WebClient` に変更** (L284-L304):
-   - `Invoke-WebRequest` → `curl.exe -o NUL --noproxy "*"` (プロキシ無効) + `System.Net.WebClient` にフォールバック
-   - ポーリング回数: 10回×2秒(20秒) → 15回×2秒(30秒) に延長
-
-2. **.env のインラインコメント除去** (L178-L192):
-   - `API_KEY=test   # コメント` → `test` として正しくパース
-   - `($raw -split '\s+#')[0].Trim()` でインラインコメントを除去
-
-3. **自動スクレイプのヘルスチェックも修正** (Start-Job 内):
-   - `Invoke-WebRequest` → `curl.exe --noproxy "*"` に変更
-
-**確認した動作**:
-- `curl.exe -o NUL -w "%{http_code}" --noproxy "*" http://localhost:8000/health` → `200`
-- `System.Net.WebClient` でも同様に成功
-
-### FastAPI 動作確認
-- `/health` → `{"status":"ok"}`
-- `/docs` → Swagger UI 200 OK
-- `/api/portfolio/summary` (X-API-Key: test) → `200 OK`
-  - 総資産 ¥38,147,992 返却 (デモデータ)
+### スキル・ポリシー整備
+- `test-driven-development` スキル: Value Validity・Full-Stack Connectivity セクション追加
+- `verification-before-completion` スキル: 3パターン追加
+- `docs/superpowers/specs/test-policy.md` 新規作成
+- `CLAUDE.md`: スキル自律改定ルール追加
 
 ## 現在の状態
 
-- FastAPI: PID 283032 (port 8000) で起動中
-- Next.js: 未起動 (setup.ps1 を完全実行していないため)
-- DB: data/assetbridge.db にデモデータあり
+- PM2: api/mcp/web/worker online、discord stopped
+- テスト: 49 pass / 0 fail
+- DB: 取得単価は次回スクレイプで自動修正される（逆算フォールバックが有効）
+- クレカ引き落とし: DBにデータが入れば自動表示される
 
-## 残課題
+## 次にやること
 
-### AIコメント
-- LLM_MODEL が設定されているが OPENROUTER_API_KEY で接続する設定
-- `OPENROUTER_API_KEY=sk-or-v1-...` は .env に設定済み
-- LLM_MODEL が `claude-sonnet-4-6` のまま → `openrouter/` プレフィックスなしで動作するか確認
-
-### 実スクレイプ
-- 現在はデモデータ
-- MF 2FA の Cookie 有効期限が残っていれば再スクレイプ可能
-- セッション: `data/sessions/mf_sbi_bank_session.json`
-
-### 次のセッションでやること
-1. `setup.ps1` を実行して起動を確認
-2. AIコメント生成を動作確認
-3. MCP サーバー・Discord Bot の動作確認
-4. 実スクレイプ実行
-
-## 既知の重要な問題
-
-### Invoke-WebRequest はプロキシでタイムアウトする
-Windows 環境では `Invoke-WebRequest` を localhost に対して使うとプロキシ設定の影響でタイムアウトする。
-代わりに `curl.exe --noproxy "*"` または `[System.Net.WebClient]` を使うこと。
+- 実際のスクレイプ後に画面で取得単価・クレカ引き落とし表示を目視確認
+- グラフ期間変更が実際に動作するか確認（DB に90日分データが蓄積後）
+- 不要なデバッグログ（browser-scraper.mjs の [DEBUG] 行）を本番前に削除検討

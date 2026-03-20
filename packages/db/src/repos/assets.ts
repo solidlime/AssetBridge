@@ -20,7 +20,7 @@ export class AssetsRepo {
 
     if (existing) {
       this.db.update(assets)
-        .set({ name: data.name, exchange: data.exchange })
+        .set({ name: data.name, exchange: data.exchange, currency: data.currency ?? existing.currency })
         .where(eq(assets.id, existing.id))
         .run();
       return existing.id;

@@ -38,7 +38,7 @@ kill_port() {
   local port=$1
   local pid
   pid=$(powershell.exe -NonInteractive -NoProfile -Command \
-    "(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess" \
+    "(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess" \
     2>/dev/null | tr -d '\r\n' | tr -d ' ')
   if [ -n "$pid" ] && [[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 0 ]; then
     powershell.exe -NonInteractive -NoProfile -Command \

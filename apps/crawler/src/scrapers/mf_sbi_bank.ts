@@ -11,7 +11,7 @@ import { AssetsRepo } from "@assetbridge/db/repos/assets";
 import { SnapshotsRepo, DailyTotalsRepo } from "@assetbridge/db/repos/snapshots";
 import { SettingsRepo } from "@assetbridge/db/repos/settings";
 import { crawlerSessions, scrapeEvents, appSettings, creditCardWithdrawals, jobQueue } from "@assetbridge/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, gte } from "drizzle-orm";
 import type { AssetType } from "@assetbridge/types";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -99,6 +99,8 @@ async function runBrowserProcess(
   jobId?: number
 ): Promise<{ data: ScrapedData; cookies: unknown[] }> {
   const scraperPath = path.join(__dirname, "browser-scraper.mjs");
+  process.stderr.write(`[mf_sbi_bank] __dirname=${__dirname}\n`);
+  process.stderr.write(`[mf_sbi_bank] scraperPath=${scraperPath}\n`);
 
   const proc = Bun.spawn({
     cmd: ["node", scraperPath],
@@ -190,7 +192,7 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
     .values({ scrapedAt: new Date(), rawJson: JSON.stringify(data) })
     .run();
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
   const assetsRepo = new AssetsRepo(db);
   const snapshotsRepo = new SnapshotsRepo(db);
   const dailyRepo = new DailyTotalsRepo(db);
@@ -234,6 +236,7 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
       symbol: h.symbol || h.name.slice(0, 50),
       name: h.name,
       assetType: h.assetType,
+      currency: h.assetType === "STOCK_US" ? "USD" : "JPY",
     });
     // unrealizedPnlPct: costBasisJpy がある場合はコスト基準、なければ valueJpy 基準で計算
     // (MF は取得単価を提供しないケースが多いため valueJpy ベースをフォールバックとして使用)
@@ -276,10 +279,19 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
 
   // クレカ引き落とし情報を DB に保存
   if (data.creditCardWithdrawals && data.creditCardWithdrawals.length > 0) {
+    // 将来の scheduled データをリセット（スクレイプのたびに最新状態に更新）
+    db.delete(creditCardWithdrawals)
+      .where(
+        and(
+          gte(creditCardWithdrawals.withdrawalDate, today),
+          eq(creditCardWithdrawals.status, "scheduled")
+        )
+      )
+      .run();
+
     const scrapedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
     for (const w of data.creditCardWithdrawals) {
-      db
-        .insert(creditCardWithdrawals)
+      db.insert(creditCardWithdrawals)
         .values({
           cardName: w.cardName,
           withdrawalDate: w.withdrawalDate,
@@ -287,7 +299,6 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
           status: w.status,
           scrapedAt,
         })
-        .onConflictDoNothing()
         .run();
     }
     console.log(`[crawler] Saved ${data.creditCardWithdrawals.length} credit card withdrawal(s)`);

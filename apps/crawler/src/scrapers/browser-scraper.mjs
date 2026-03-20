@@ -303,7 +303,7 @@ export async function scrapeCardsByDl(page) {
       const allRows = [...mfSpecificData, ...tableData];
       process.stderr.write(`[browser-scraper] CF total candidate rows: ${allRows.length}\n`);
 
-      const creditKeywords = ['カード', '引き落とし', '引落', 'クレジット', 'VISA', 'Mastercard', 'JCB', 'AMEX'];
+      const creditKeywords = ['カード', '引き落とし', '引落', 'クレジット', 'VISA', 'Mastercard', 'JCB', 'AMEX', '楽天', '三井住友', 'Paidy'];
       for (const { cells } of allRows) {
         const rowText = cells.join(' ');
         if (creditKeywords.some(kw => rowText.includes(kw))) {
@@ -513,6 +513,9 @@ async function scrapePortfolio(page) {
 
   let stockDebugCount = 0;
 
+  let currentInstitution = "";
+  let currentCategory = "CASH";
+
   for (const { cellTexts, thAnchorText } of tableData) {
     const count = cellTexts.length;
 
@@ -525,7 +528,16 @@ async function scrapePortfolio(page) {
         // cellTexts[0]=カテゴリ名(th), cellTexts[1]=金額(td), cellTexts[2]=割合(td)
         const tdText = cellTexts[1];
         const assetType = CATEGORY_MAP[catName];
-        if (assetType) categories[assetType] = parseAmount(tdText);
+        if (assetType) {
+          categories[assetType] = parseAmount(tdText);
+          currentCategory = assetType;
+          currentInstitution = "";
+        }
+      } else {
+        const possibleInstitution = (cellTexts[0] ?? "").trim();
+        if (possibleInstitution) {
+          currentInstitution = possibleInstitution;
+        }
       }
     } else if (count >= 13) {
       if (stockDebugCount < 5) {
@@ -569,8 +581,9 @@ async function scrapePortfolio(page) {
         process.stderr.write(`[DEBUG] cash row: count=${count}, name="${name}", balance="${cellTexts[1]}"\n`);
       }
       if (name && balance > 0) {
+        const fullName = currentInstitution ? `${currentInstitution}[${name}]` : name;
         holdings.push({
-          symbol: "", name, assetType: "CASH",
+          symbol: "", name: fullName, assetType: currentCategory,
           valueJpy: balance, unrealizedPnlJpy: 0,
           quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
         });

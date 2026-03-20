@@ -142,7 +142,7 @@ kill_port() {
   local port=$1
   local pid
   pid=$(powershell.exe -NonInteractive -NoProfile -Command \
-    "(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess" \
+    "(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess" \
     2>/dev/null | tr -d '\r\n' | tr -d ' ')
   if [ -n "$pid" ] && [[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 0 ]; then
     powershell.exe -NonInteractive -NoProfile -Command \
@@ -176,7 +176,7 @@ fi
 # ---------------------------------------------------------------------------
 info "Waiting for API health check at http://localhost:8000/health ..."
 HEALTH_OK=false
-for i in $(seq 1 15); do
+for i in {1..15}; do
   if curl -sf --noproxy "*" http://localhost:8000/health >/dev/null 2>&1; then
     HEALTH_OK=true
     break
