@@ -454,6 +454,9 @@ async function scrapePortfolio(page) {
     const count = cellTexts.length;
 
     if (count === 2 || count === 3) {
+      if (holdings.length < 3) {
+        process.stderr.write(`[DEBUG] category row: count=${count}, text="${cellTexts[0]}"\n`);
+      }
       if (thAnchorText) {
         const catName = thAnchorText;
         // cellTexts[0]=カテゴリ名(th), cellTexts[1]=金額(td), cellTexts[2]=割合(td)
@@ -462,6 +465,10 @@ async function scrapePortfolio(page) {
         if (assetType) categories[assetType] = parseAmount(tdText);
       }
     } else if (count >= 13) {
+      // DEBUG: 最初の3件のみセル数をログ
+      if (holdings.length < 3) {
+        process.stderr.write(`[DEBUG] row with count=${count}, cellTexts.length=${cellTexts.length}, first 3 cells: [${cellTexts.slice(0, 3).map(c => `"${c}"`).join(', ')}]\n`);
+      }
       // MF 株式テーブル構造:
       //   td[0]: 銘柄コード（例: "1605", "AMD", "ASTS"）
       //   td[1]: 銘柄名（例: "INPEX", "アドバンスト マイクロ デバイシズ"）
@@ -483,7 +490,19 @@ async function scrapePortfolio(page) {
           symbol = symbolMatch ? symbolMatch[1] : codeCandidate || name.slice(0, 10).replace(/\s/g, "");
         }
         const quantity = parseAmount(cellTexts[4] ?? "0");
-        const costPerUnitJpy = parseAmount(cellTexts[6] ?? "0");
+        // 取得単価の取得（[6] から直接、なければ含み損益額 [7] から逆算）
+        // 逆算式: 取得単価 = (評価額 - 含み損益額) / 数量
+        let costPerUnitJpy = parseAmount(cellTexts[6] ?? "0");
+        // DEBUG: 最初の3件のみログ出力
+        if (holdings.length < 3) {
+          process.stderr.write(`[DEBUG] ${name}: cellTexts[6]="${cellTexts[6]}", costPerUnitJpy=${costPerUnitJpy}, quantity=${quantity}, valueJpy=${valueJpy}, unrealizedPnlJpy=${unrealizedPnlJpy}\n`);
+        }
+        if (costPerUnitJpy === 0 && quantity > 0) {
+          costPerUnitJpy = (valueJpy - unrealizedPnlJpy) / quantity;
+          if (holdings.length < 3) {
+            process.stderr.write(`[DEBUG] ${name}: cost fallback -> ${costPerUnitJpy}\n`);
+          }
+        }
         const priceJpy = quantity > 0 ? valueJpy / quantity : 0;
         const costBasisJpy = costPerUnitJpy * quantity;
         holdings.push({
@@ -496,6 +515,9 @@ async function scrapePortfolio(page) {
     } else if (count === 5) {
       const name = cellTexts[0] ?? "";
       const balance = parseAmount(cellTexts[1] ?? "0");
+      if (holdings.length < 3) {
+        process.stderr.write(`[DEBUG] cash row: count=${count}, name="${name}", balance="${cellTexts[1]}"\n`);
+      }
       if (name && balance > 0) {
         holdings.push({
           symbol: "", name, assetType: "CASH",
