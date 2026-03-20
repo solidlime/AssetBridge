@@ -214,6 +214,9 @@ function AssetsPageInner() {
 
   const [activeType, setActiveType] = useState(initialType);
   const [holdings, setHoldings] = useState<Holding[]>([]);
+  // APIから取得したオリジナルデータを保持するRef
+  // ソートは常にこのRefのコピーに対して行い、holdingsを破壊しない
+  const originalHoldingsRef = useRef<Holding[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("valueJpy");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -253,6 +256,8 @@ function AssetsPageInner() {
                 priceDiffPct: (item as { priceDiffPct?: number | null }).priceDiffPct ?? null,
               }))
             : [];
+          // オリジナルデータをRefに保存（ソートは常にこのRefのコピーから行う）
+          originalHoldingsRef.current = mapped;
           setHoldings(mapped);
           setLoading(false);
         }
@@ -260,6 +265,7 @@ function AssetsPageInner() {
       .catch((err: unknown) => {
         console.warn("資産一覧取得失敗:", err instanceof Error ? err.message : err);
         if (!cancelled) {
+          originalHoldingsRef.current = [];
           setHoldings([]);
           setLoading(false);
         }
@@ -281,7 +287,9 @@ function AssetsPageInner() {
     [sortKey]
   );
 
-  const sortedHoldings = [...holdings].sort((a, b) => {
+  // ソートは常に元データ(originalHoldingsRef)のコピーに対して行う
+  // holdingsをそのままソートすると、連打時に再ソートが重複を生む可能性があるため
+  const sortedHoldings = [...originalHoldingsRef.current].sort((a, b) => {
     let av: number | string | null;
     let bv: number | string | null;
 
