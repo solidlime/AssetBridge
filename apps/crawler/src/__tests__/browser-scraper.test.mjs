@@ -1,5 +1,11 @@
 import { describe, it, expect } from "bun:test";
-import { parseCardAmount, parseCardBlock } from "../scrapers/browser-scraper.mjs";
+import {
+  parseCardAmount,
+  parseCardBlock,
+  scrapeCardsByAnchor,
+  scrapeCardsByDl,
+  scrapeCreditCardWithdrawals,
+} from "../scrapers/browser-scraper.mjs";
 
 describe("parseCardAmount", () => {
   it("通常の負の金額を正の数値で返す", () => {
@@ -52,5 +58,41 @@ sol******`;
 
   it("空文字はnullを返す", () => {
     expect(parseCardBlock("")).toBeNull();
+  });
+});
+
+describe("scrapeCardsByAnchor", () => {
+  it("関数としてエクスポートされていること", () => {
+    expect(typeof scrapeCardsByAnchor).toBe("function");
+  });
+
+  it("null ページでエラーをキャッチして空配列を返す", async () => {
+    // page.goto が TypeError をスローするが、関数内 try/catch で捕捉され [] を返す
+    const result = await scrapeCardsByAnchor(null);
+    expect(result).toEqual([]);
+  });
+});
+
+describe("scrapeCardsByDl", () => {
+  it("関数としてエクスポートされていること", () => {
+    expect(typeof scrapeCardsByDl).toBe("function");
+  });
+
+  it("null ページでエラーをキャッチして空配列を返す", async () => {
+    // page.goto が TypeError をスローするが、関数内 try/catch で捕捉され [] を返す
+    const result = await scrapeCardsByDl(null);
+    expect(result).toEqual([]);
+  });
+});
+
+describe("scrapeCreditCardWithdrawals (オーケストレーター)", () => {
+  it("関数としてエクスポートされていること", () => {
+    expect(typeof scrapeCreditCardWithdrawals).toBe("function");
+  });
+
+  it("null ページでエラーをキャッチして空配列を返す", async () => {
+    // scrapeCardsByAnchor が [] を返すと scrapeCardsByDl を呼ぶが、どちらも [] → 空配列
+    const result = await scrapeCreditCardWithdrawals(null);
+    expect(result).toEqual([]);
   });
 });

@@ -166,55 +166,67 @@ export function parseCardBlock(blockText) {
 }
 
 /**
- * クレジットカード引き落とし予定情報をスクレイプ
- * トップページの「金融機関サービスサイトへ」アンカーベースで取得し、
- * 失敗時は /bs/cf → /bs/accounts にフォールバック
+ * アンカーリンク経由でクレカ情報を取得 (BASE_URL トップページ専用)
+ * 「金融機関サービスサイトへ」アンカーを起点にカードブロックを解析する。
+ * @param {import('playwright').Page} page
+ * @returns {Promise<{cardName:string, withdrawalDate:string|null, amountJpy:number, status:string}[]>}
  */
-async function scrapeCreditCardWithdrawals(page) {
+export async function scrapeCardsByAnchor(page) {
   const results = [];
-  const urlsToTry = [BASE_URL, `${BASE_URL}/bs/cf`, `${BASE_URL}/bs/accounts`];
+  try {
+    await page.goto(BASE_URL, { waitUntil: "networkidle", timeout: 20000 });
+    await new Promise(r => setTimeout(r, 3000));
+    process.stderr.write(`[browser-scraper] scrapeCardsByAnchor: URL=${page.url()}\n`);
 
-  for (const url of urlsToTry) {
+    const cardBlocks = await page.evaluate(() => {
+      // 「金融機関サービスサイトへ」リンクを全て取得 → 各カードの起点
+      const anchors = Array.from(document.querySelectorAll('a'));
+      const cardAnchors = anchors.filter(a => a.textContent.includes('金融機関サービスサイトへ'));
+      return cardAnchors.map(a => {
+        // カード名はアンカーの親要素のテキスト or 直前のテキスト
+        const wrapper = a.closest('li, .account-item, .card-item, section, div') || a.parentElement;
+        return wrapper ? wrapper.innerText : '';
+      });
+    });
+
+    process.stderr.write(`[browser-scraper] Card anchors found: ${cardBlocks.length}\n`);
+    for (let i = 0; i < cardBlocks.length; i++) {
+      process.stderr.write(`[browser-scraper] Card block[${i}]: ${cardBlocks[i].slice(0, 300)}\n`);
+    }
+
+    for (const blockText of cardBlocks) {
+      const parsed = parseCardBlock(blockText);
+      if (parsed) {
+        process.stderr.write(`[browser-scraper] Parsed card: ${JSON.stringify(parsed)}\n`);
+        results.push(parsed);
+      } else {
+        process.stderr.write(`[browser-scraper] parseCardBlock returned null for block: ${blockText.slice(0, 100)}\n`);
+      }
+    }
+
+    process.stderr.write(`[browser-scraper] Credit withdrawals found on ${BASE_URL}: ${results.length}\n`);
+  } catch (e) {
+    process.stderr.write(`[browser-scraper] scrapeCardsByAnchor error: ${e.message}\n`);
+  }
+  return results;
+}
+
+/**
+ * dl/dt/dd 構造およびテーブルからクレカ情報を取得 (フォールバック用)
+ * /bs/cf → /bs/accounts の順に試みる。
+ * @param {import('playwright').Page} page
+ * @returns {Promise<{cardName:string, withdrawalDate:string|null, amountJpy:number, status:string}[]>}
+ */
+export async function scrapeCardsByDl(page) {
+  const results = [];
+  const fallbackUrls = [`${BASE_URL}/bs/cf`, `${BASE_URL}/bs/accounts`];
+
+  for (const url of fallbackUrls) {
     if (results.length > 0) break;
     try {
       await page.goto(url, { waitUntil: "networkidle", timeout: 20000 });
       await new Promise(r => setTimeout(r, 3000));
-      process.stderr.write(`[browser-scraper] scrapeCreditCardWithdrawals: URL=${page.url()}\n`);
-
-      // ── トップページ: 「金融機関サービスサイトへ」アンカーベース ──
-      if (url === BASE_URL) {
-        const cardBlocks = await page.evaluate(() => {
-          // 「金融機関サービスサイトへ」リンクを全て取得 → 各カードの起点
-          const anchors = Array.from(document.querySelectorAll('a'));
-          const cardAnchors = anchors.filter(a => a.textContent.includes('金融機関サービスサイトへ'));
-
-          return cardAnchors.map(a => {
-            // カード名はアンカーの親要素のテキスト or 直前のテキスト
-            const wrapper = a.closest('li, .account-item, .card-item, section, div') || a.parentElement;
-            return wrapper ? wrapper.innerText : '';
-          });
-        });
-
-        process.stderr.write(`[browser-scraper] Card anchors found: ${cardBlocks.length}\n`);
-        for (let i = 0; i < cardBlocks.length; i++) {
-          process.stderr.write(`[browser-scraper] Card block[${i}]: ${cardBlocks[i].slice(0, 300)}\n`);
-        }
-
-        for (const blockText of cardBlocks) {
-          const parsed = parseCardBlock(blockText);
-          if (parsed) {
-            process.stderr.write(`[browser-scraper] Parsed card: ${JSON.stringify(parsed)}\n`);
-            results.push(parsed);
-          } else {
-            process.stderr.write(`[browser-scraper] parseCardBlock returned null for block: ${blockText.slice(0, 100)}\n`);
-          }
-        }
-
-        process.stderr.write(`[browser-scraper] Credit withdrawals found on ${url}: ${results.length}\n`);
-        continue;
-      }
-
-      // ── フォールバック: テーブルベースのアプローチ ──
+      process.stderr.write(`[browser-scraper] scrapeCardsByDl: URL=${page.url()}\n`);
 
       // デバッグ: ページ内テーブル数・行数
       const debugInfo = await page.evaluate(() => {
@@ -372,10 +384,31 @@ async function scrapeCreditCardWithdrawals(page) {
 
       process.stderr.write(`[browser-scraper] Credit withdrawals found on ${url}: ${results.length}\n`);
     } catch (e) {
-      process.stderr.write(`[browser-scraper] scrapeCreditCardWithdrawals error on ${url}: ${e.message}\n`);
+      process.stderr.write(`[browser-scraper] scrapeCardsByDl error on ${url}: ${e.message}\n`);
     }
   }
   return results;
+}
+
+/**
+ * クレジットカード引き落とし予定情報をスクレイプ (オーケストレーター)
+ * scrapeCardsByAnchor を優先し、結果がなければ scrapeCardsByDl にフォールバック。
+ * 両ソースの結果を cardName でマージ・重複排除して返す。
+ * @param {import('playwright').Page} page
+ * @returns {Promise<{cardName:string, withdrawalDate:string|null, amountJpy:number, status:string}[]>}
+ */
+export async function scrapeCreditCardWithdrawals(page) {
+  const anchorResults = await scrapeCardsByAnchor(page);
+  // アンカーで取得できた場合はそのまま返す（フォールバック不要）
+  const dlResults = anchorResults.length > 0 ? [] : await scrapeCardsByDl(page);
+
+  // cardName をキーに重複排除してマージ
+  const seen = new Set();
+  return [...anchorResults, ...dlResults].filter(item => {
+    if (seen.has(item.cardName)) return false;
+    seen.add(item.cardName);
+    return true;
+  });
 }
 
 async function scrapePortfolio(page) {
