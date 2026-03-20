@@ -1,6 +1,7 @@
-import { db } from "@assetbridge/db/client";
-import { creditCardWithdrawals } from "@assetbridge/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { db, sqlite } from "@assetbridge/db/client";
+import { assets, creditCardWithdrawals, portfolioSnapshots } from "@assetbridge/db/schema";
+import { SettingsRepo } from "@assetbridge/db/repos/settings";
+import { and, desc, eq } from "drizzle-orm";
 
 export interface CreditWithdrawal {
   id: number;
@@ -15,6 +16,31 @@ export interface UpcomingWithdrawalsResult {
   withdrawals: CreditWithdrawal[];
   totalAmountJpy: number;
   count: number;
+}
+
+// ─── CC残高管理 型定義 ────────────────────────────────────────────────────────
+
+export interface CcBalanceStatusItem {
+  cardName: string;
+  withdrawalDate: string;
+  amountJpy: number;
+  status: string;
+  accountName: string | null;       // 未紐づけは null
+  accountAssetId: number | null;
+  accountBalanceJpy: number | null;
+  shortfallJpy: number;             // accountBalanceJpy - amountJpy (負値=不足、未紐づけは0)
+  isInsufficient: boolean;
+}
+
+export interface CcBalanceStatus {
+  status: "ok" | "warning";         // いずれかのカードで isInsufficient=true なら "warning"
+  totalWithdrawalJpy: number;
+  summary: CcBalanceStatusItem[];
+}
+
+export interface CcAccountMapping {
+  mapping: Record<string, number>;  // card_name → asset_id
+  accounts: Array<{ assetId: number; name: string; balanceJpy: number }>;
 }
 
 export async function getUpcomingWithdrawals(_days: number): Promise<UpcomingWithdrawalsResult> {
@@ -60,4 +86,133 @@ export async function getAllWithdrawals(limit: number): Promise<CreditWithdrawal
     status: r.status as "scheduled" | "withdrawn",
     scrapedAt: r.scrapedAt,
   }));
+}
+
+// ─── CC残高管理 関数 ──────────────────────────────────────────────────────────
+
+/**
+ * 各クレジットカードの引き落とし予定と紐づき口座残高を照合し、
+ * 残高不足の有無をまとめて返す。
+ */
+export async function getCcBalanceStatus(): Promise<CcBalanceStatus> {
+  // 1. status='scheduled' の引き落とし予定を全件取得
+  const rows = db
+    .select()
+    .from(creditCardWithdrawals)
+    .where(eq(creditCardWithdrawals.status, "scheduled"))
+    .orderBy(creditCardWithdrawals.withdrawalDate)
+    .all();
+
+  // 2. cc_account_mapping を app_settings から取得（未設定なら {}）
+  const settingsRepo = new SettingsRepo(sqlite);
+  const mappingJson = settingsRepo.get("cc_account_mapping");
+  const mapping: Record<string, number> = mappingJson ? (JSON.parse(mappingJson) as Record<string, number>) : {};
+
+  // 3. マッピングに含まれる asset_id ごとの最新残高を一括取得（重複クエリ防止）
+  const assetIds = [...new Set(Object.values(mapping))];
+  const balanceCache = new Map<number, { name: string; valueJpy: number }>();
+
+  for (const assetId of assetIds) {
+    const assetRow = db
+      .select({ name: assets.name })
+      .from(assets)
+      .where(eq(assets.id, assetId))
+      .get();
+
+    const snapRow = db
+      .select({ valueJpy: portfolioSnapshots.valueJpy })
+      .from(portfolioSnapshots)
+      .where(eq(portfolioSnapshots.assetId, assetId))
+      .orderBy(desc(portfolioSnapshots.date))
+      .limit(1)
+      .get();
+
+    if (assetRow) {
+      balanceCache.set(assetId, {
+        name: assetRow.name,
+        valueJpy: snapRow?.valueJpy ?? 0,
+      });
+    }
+  }
+
+  // 4. 引き落とし予定ごとに残高照合アイテムを構築
+  const summary: CcBalanceStatusItem[] = rows.map((r) => {
+    const assetId = mapping[r.cardName] ?? null;
+    const account = assetId !== null ? (balanceCache.get(assetId) ?? null) : null;
+    const accountBalanceJpy = account?.valueJpy ?? null;
+
+    let shortfallJpy = 0;
+    let isInsufficient = false;
+
+    if (assetId !== null && accountBalanceJpy !== null) {
+      shortfallJpy = accountBalanceJpy - r.amountJpy;
+      isInsufficient = shortfallJpy < 0;
+    }
+
+    return {
+      cardName: r.cardName,
+      withdrawalDate: r.withdrawalDate,
+      amountJpy: r.amountJpy,
+      status: r.status,
+      accountName: account?.name ?? null,
+      accountAssetId: assetId,
+      accountBalanceJpy,
+      shortfallJpy,
+      isInsufficient,
+    };
+  });
+
+  const totalWithdrawalJpy = summary.reduce((sum, s) => sum + s.amountJpy, 0);
+  const overallStatus: "ok" | "warning" = summary.some((s) => s.isInsufficient) ? "warning" : "ok";
+
+  return { status: overallStatus, totalWithdrawalJpy, summary };
+}
+
+/**
+ * カード名→口座 asset_id のマッピングと、CASH 口座の最新残高一覧を返す。
+ */
+export async function getCcAccountMapping(): Promise<CcAccountMapping> {
+  // 1. 現在のマッピングを取得
+  const settingsRepo = new SettingsRepo(sqlite);
+  const mappingJson = settingsRepo.get("cc_account_mapping");
+  const mapping: Record<string, number> = mappingJson ? (JSON.parse(mappingJson) as Record<string, number>) : {};
+
+  // 2. CASH 資産の最新スナップショット日付を取得
+  const latestDateRow = db
+    .select({ date: portfolioSnapshots.date })
+    .from(portfolioSnapshots)
+    .orderBy(desc(portfolioSnapshots.date))
+    .limit(1)
+    .get();
+
+  let accounts: Array<{ assetId: number; name: string; balanceJpy: number }> = [];
+
+  if (latestDateRow) {
+    const cashRows = db
+      .select({
+        assetId: assets.id,
+        name: assets.name,
+        valueJpy: portfolioSnapshots.valueJpy,
+      })
+      .from(assets)
+      .innerJoin(portfolioSnapshots, eq(portfolioSnapshots.assetId, assets.id))
+      .where(and(eq(assets.assetType, "CASH"), eq(portfolioSnapshots.date, latestDateRow.date)))
+      .all();
+
+    accounts = cashRows.map((r) => ({
+      assetId: r.assetId,
+      name: r.name,
+      balanceJpy: r.valueJpy,
+    }));
+  }
+
+  return { mapping, accounts };
+}
+
+/**
+ * カード名→口座 asset_id のマッピングを app_settings に保存する。
+ */
+export async function setCcAccountMapping(mapping: Record<string, number>): Promise<void> {
+  const settingsRepo = new SettingsRepo(sqlite);
+  settingsRepo.set("cc_account_mapping", JSON.stringify(mapping));
 }

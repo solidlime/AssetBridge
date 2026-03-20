@@ -1,6 +1,12 @@
 import { router, proc } from "../trpc";
 import { z } from "zod";
-import { getUpcomingWithdrawals, getAllWithdrawals } from "../services/income_expense";
+import {
+  getAllWithdrawals,
+  getCcAccountMapping,
+  getCcBalanceStatus,
+  getUpcomingWithdrawals,
+  setCcAccountMapping,
+} from "../services/income_expense";
 
 export const incomeExpenseRouter = router({
   upcomingWithdrawals: proc
@@ -10,4 +16,12 @@ export const incomeExpenseRouter = router({
   allWithdrawals: proc
     .input(z.object({ limit: z.number().min(1).max(500).default(100) }))
     .query(({ input }) => getAllWithdrawals(input.limit)),
+
+  getCcAccountMapping: proc.query(() => getCcAccountMapping()),
+
+  setCcAccountMapping: proc
+    .input(z.record(z.string(), z.number()))
+    .mutation(({ input }) => setCcAccountMapping(input)),
+
+  getCcBalanceStatus: proc.query(() => getCcBalanceStatus()),
 });
