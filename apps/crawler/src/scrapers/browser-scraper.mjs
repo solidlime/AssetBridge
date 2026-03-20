@@ -15,6 +15,27 @@
 process.stderr.write(`[browser-scraper] FILE_PATH=${new URL(import.meta.url).pathname}\n`);
 
 import { chromium } from "playwright";
+import { mkdirSync } from 'fs';
+import { join } from 'path';
+
+const SAVE_SNAPSHOTS = process.env.SAVE_SNAPSHOTS === '1';
+const snapshotDir = (() => {
+  const date = new Date().toISOString().split('T')[0];
+  const dir = join(process.cwd(), 'data', 'snapshots', date);
+  if (SAVE_SNAPSHOTS) mkdirSync(dir, { recursive: true });
+  return dir;
+})();
+
+async function saveSnapshot(page, name) {
+  if (!SAVE_SNAPSHOTS) return;
+  try {
+    const filePath = join(snapshotDir, `${name}.png`);
+    await page.screenshot({ path: filePath, fullPage: true });
+    console.error(`[snapshot] saved: ${filePath}`);
+  } catch (e) {
+    console.error(`[snapshot] failed to save ${name}: ${e.message}`);
+  }
+}
 
 const BASE_URL = "https://ssnb.x.moneyforward.com";
 
@@ -147,6 +168,7 @@ async function login(page) {
   }
 
   process.stderr.write("[browser-scraper] Login successful, URL: " + page.url() + "\n");
+  await saveSnapshot(page, '00_after_login');
 }
 
 /**
@@ -473,15 +495,16 @@ export async function scrapeCardsByDl(page) {
 
 /**
  * クレジットカード引き落とし予定情報をスクレイプ (オーケストレーター)
- * scrapeCardsByAnchor を優先し、結果がなければ scrapeCardsByDl にフォールバック。
+ * scrapeCardsByAnchor と scrapeCardsByDl の両方を常に実行し、
  * 両ソースの結果を cardName でマージ・重複排除して返す。
  * @param {import('playwright').Page} page
  * @returns {Promise<{cardName:string, withdrawalDate:string|null, amountJpy:number, status:string}[]>}
  */
 export async function scrapeCreditCardWithdrawals(page) {
   const anchorResults = await scrapeCardsByAnchor(page);
-  // アンカーで取得できた場合はそのまま返す（フォールバック不要）
-  const dlResults = anchorResults.length > 0 ? [] : await scrapeCardsByDl(page);
+  await saveSnapshot(page, '02_credit');
+  // 両方を常に実行し、cardName で重複排除してマージする
+  const dlResults = await scrapeCardsByDl(page);
 
   // cardName をキーに重複排除してマージ
   const seen = new Set();
@@ -494,6 +517,7 @@ export async function scrapeCreditCardWithdrawals(page) {
 
 async function scrapePortfolio(page) {
   await page.goto(`${BASE_URL}/bs/portfolio`, { waitUntil: "networkidle" });
+  await saveSnapshot(page, '01_portfolio');
   await new Promise(r => setTimeout(r, 3000)); // JS render wait
   process.stderr.write(`[browser-scraper] scrapePortfolio: URL=${page.url()}\n`);
 
@@ -663,7 +687,7 @@ async function scrapePortfolio(page) {
       if (holdings.length < 3) {
         process.stderr.write(`[DEBUG] cash row: count=${count}, name="${name}", balance="${cellTexts[1]}"\n`);
       }
-      if (name && balance > 0) {
+      if (name && balance > 0 && !/[\u2039\u203A]/.test(name)) {
         const fullName = lastCashInstitution ? `${lastCashInstitution}[${name}]` : name;
         holdings.push({
           symbol: "", name: fullName, assetType: currentCategory,
@@ -690,7 +714,7 @@ async function scrapePortfolio(page) {
       }
       // ゴミ行フィルタ: 名前が意味のある文字列のみ受け付ける
       const isValidName = name.length > 1 
-        && !name.startsWith('\u2039')  // ‹ を除外
+        && !/[\u2039\u203A]/.test(name)  // ‹/› ページネーション要素を除外
         && !name.startsWith('<')
         && !/^\s*$/.test(name);
       if (name && balance > 0 && isValidName) {

@@ -177,17 +177,19 @@ export async function getCcAccountMapping(): Promise<CcAccountMapping> {
   const mappingJson = settingsRepo.get("cc_account_mapping");
   const mapping: Record<string, number> = mappingJson ? (JSON.parse(mappingJson) as Record<string, number>) : {};
 
-  // 2. CASH 資産の最新スナップショット日付を取得
-  const latestDateRow = db
+  // 2. CASH 資産の中で最新のスナップショット日付を取得（全体の最新日とは異なる場合がある）
+  const latestCashDateRow = db
     .select({ date: portfolioSnapshots.date })
     .from(portfolioSnapshots)
+    .innerJoin(assets, eq(portfolioSnapshots.assetId, assets.id))
+    .where(eq(assets.assetType, "CASH"))
     .orderBy(desc(portfolioSnapshots.date))
     .limit(1)
     .get();
 
   let accounts: Array<{ assetId: number; name: string; balanceJpy: number }> = [];
 
-  if (latestDateRow) {
+  if (latestCashDateRow) {
     const cashRows = db
       .select({
         assetId: assets.id,
@@ -196,7 +198,7 @@ export async function getCcAccountMapping(): Promise<CcAccountMapping> {
       })
       .from(assets)
       .innerJoin(portfolioSnapshots, eq(portfolioSnapshots.assetId, assets.id))
-      .where(and(eq(assets.assetType, "CASH"), eq(portfolioSnapshots.date, latestDateRow.date)))
+      .where(and(eq(assets.assetType, "CASH"), eq(portfolioSnapshots.date, latestCashDateRow.date)))
       .all();
 
     accounts = cashRows.map((r) => ({
