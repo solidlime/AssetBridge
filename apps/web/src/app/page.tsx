@@ -135,7 +135,7 @@ export default async function DashboardPage() {
       {/* クレジットカード引き落とし予定 */}
       <div style={{ marginBottom: 32 }}>
         <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16, color: "#e2e8f0" }}>
-          クレジットカード引き落とし予定（60日以内）
+          クレジットカード引き落とし予定（直近・今後）
         </h2>
         
         {upcomingResult && upcomingResult.withdrawals.length > 0 ? (
@@ -143,7 +143,7 @@ export default async function DashboardPage() {
             {/* 引き落とし合計カード */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
               <div style={{ background: "#1e293b", borderRadius: 12, padding: 20 }}>
-                <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>60日以内の引き落とし合計</div>
+                <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>引き落とし予定の合計</div>
                 <div style={{ fontSize: 28, fontWeight: 700, color: "#f87171" }}>
                   {formatJpy(upcomingResult.totalAmountJpy)}
                 </div>

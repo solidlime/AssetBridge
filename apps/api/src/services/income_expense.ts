@@ -1,6 +1,6 @@
 import { db } from "@assetbridge/db/client";
 import { creditCardWithdrawals } from "@assetbridge/db/schema";
-import { gte, lte, desc } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 
 export interface CreditWithdrawal {
   id: number;
@@ -17,19 +17,14 @@ export interface UpcomingWithdrawalsResult {
   count: number;
 }
 
-export async function getUpcomingWithdrawals(days: number): Promise<UpcomingWithdrawalsResult> {
-  const today = new Date().toISOString().split("T")[0];
-  const future = new Date(Date.now() + days * 86400_000).toISOString().split("T")[0];
-
+export async function getUpcomingWithdrawals(_days: number): Promise<UpcomingWithdrawalsResult> {
+  // status='scheduled' のものは引き落とし日に関わらず全件返す（過去分も確認できるように）
   const rows = db
     .select()
     .from(creditCardWithdrawals)
-    .where(
-      gte(creditCardWithdrawals.withdrawalDate, today)
-    )
+    .where(eq(creditCardWithdrawals.status, "scheduled"))
     .orderBy(creditCardWithdrawals.withdrawalDate)
-    .all()
-    .filter((r) => r.withdrawalDate <= future);
+    .all();
 
   const withdrawals: CreditWithdrawal[] = rows.map((r) => ({
     id: r.id,
