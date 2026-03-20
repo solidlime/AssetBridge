@@ -10,6 +10,7 @@ import { registerDividendsTools } from "./tools/dividends";
 import { registerScrapeTools } from "./tools/scrape";
 import { registerSimulatorTools } from "./tools/simulator";
 import { registerResources } from "./tools/resources";
+import { registerCreditTools } from "./tools/credit";
 
 const server = new McpServer({
   name: "assetbridge",
@@ -23,6 +24,7 @@ registerMarketTools(server);
 registerDividendsTools(server);
 registerScrapeTools(server);
 registerSimulatorTools(server);
+registerCreditTools(server);
 registerResources(server);
 
 // スクレイプ時に2FAが要求された場合に使用する設定ツール
