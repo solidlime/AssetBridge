@@ -65,27 +65,42 @@ export function buildMonthlyBreakdown(
   const monthly = Array(12).fill(0) as number[];
   for (const h of holdings) {
     if (h.annualEstJpy <= 0) continue;
-    if (h.nextExDate) {
-      // 権利落ち日が判明している場合: その月と6ヶ月後に半分ずつ
+
+    if (h.assetType === "FUND") {
+      if (h.nextExDate) {
+        // 年1回分配型(nextExDateあり): 分配月にのみ全額を計上
+        const exMonth = parseInt(h.nextExDate.split("-")[1], 10) - 1;
+        monthly[exMonth] += h.annualEstJpy;
+      } else {
+        // 毎月分配型(nextExDateなし): 全12ヶ月均等
+        for (let m = 0; m < 12; m++) {
+          monthly[m] += h.annualEstJpy / 12;
+        }
+      }
+    } else if (h.nextExDate) {
+      // 権利落ち日が判明している STOCK 系:
       const exMonth = parseInt(h.nextExDate.split("-")[1], 10) - 1;
-      const exMonth2 = (exMonth + 6) % 12;
-      monthly[exMonth] += h.annualEstJpy / 2;
-      monthly[exMonth2] += h.annualEstJpy / 2;
+      if (h.assetType === "STOCK_US") {
+        // 米国株: 四半期配当（権利落ち日の月から3ヶ月ごと）
+        monthly[exMonth]              += h.annualEstJpy / 4;
+        monthly[(exMonth + 3) % 12]  += h.annualEstJpy / 4;
+        monthly[(exMonth + 6) % 12]  += h.annualEstJpy / 4;
+        monthly[(exMonth + 9) % 12]  += h.annualEstJpy / 4;
+      } else {
+        // 日本株: 半期配当（権利落ち日の月と6ヶ月後）
+        monthly[exMonth]             += h.annualEstJpy / 2;
+        monthly[(exMonth + 6) % 12] += h.annualEstJpy / 2;
+      }
     } else if (h.assetType === "STOCK_JP") {
-      // 日本株: 3月・9月が最も一般的な配当月（半期配当の標準パターン）
+      // 日本株（権利落ち日不明）: 3月・9月が最も一般的な配当月
       monthly[2] += h.annualEstJpy / 2;  // 3月
       monthly[8] += h.annualEstJpy / 2;  // 9月
     } else if (h.assetType === "STOCK_US") {
-      // 米国株: 四半期配当（3/6/9/12月に均等配分）
+      // 米国株（権利落ち日不明）: 四半期配当（3/6/9/12月に均等配分）
       monthly[2]  += h.annualEstJpy / 4; // 3月
       monthly[5]  += h.annualEstJpy / 4; // 6月
       monthly[8]  += h.annualEstJpy / 4; // 9月
       monthly[11] += h.annualEstJpy / 4; // 12月
-    } else if (h.assetType === "FUND") {
-      // 毎月分配型: 全12ヶ月均等
-      for (let m = 0; m < 12; m++) {
-        monthly[m] += h.annualEstJpy / 12;
-      }
     } else {
       // その他: 12ヶ月均等分配
       for (let m = 0; m < 12; m++) {
