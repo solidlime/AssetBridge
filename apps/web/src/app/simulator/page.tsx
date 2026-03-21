@@ -17,15 +17,19 @@ export default function SimulatorPage() {
   const [loading, setLoading] = useState(false);
 
   // 総資産を取得して初期資産の初期値に設定
+  // portfolio.snapshot は getHoldings() → fetchYahooQuotes() を呼ぶため低速・失敗リスクあり。
+  // portfolio.history (DB only) で totalJpy だけを軽量取得する。
   useEffect(() => {
-    trpc.portfolio.snapshot.query({})
+    trpc.portfolio.history.query({ days: 1 })
       .then((data) => {
-        if (data?.totalJpy && data.totalJpy > 0) {
-          setParams((p) => ({ ...p, initial: Math.round(data.totalJpy) }));
+        const latest = data[data.length - 1];
+        if (latest?.totalJpy && latest.totalJpy > 0) {
+          setParams((p) => ({ ...p, initial: Math.round(latest.totalJpy) }));
         }
       })
-      .catch(() => {
+      .catch((err) => {
         // 取得失敗時はデフォルト値 (1,000,000) を使用
+        console.warn("[Simulator] 総資産取得失敗 (portfolio.history):", err);
       });
   }, []);
 

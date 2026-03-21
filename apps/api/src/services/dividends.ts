@@ -1,8 +1,30 @@
-import type { DividendCalendar, DividendHolding } from "@assetbridge/types";
+import type { DividendCalendar, DividendHolding, HoldingItem } from "@assetbridge/types";
 import { getCached, setCached } from "../lib/cache";
 import { getHoldings } from "./portfolio";
+import { getMarketContext } from "./market";
+
+interface YfDividendEvent {
+  date: Date | string;
+  dividends: number;
+}
+
+interface YfQuoteSummaryResult {
+  summaryDetail?: {
+    dividendYield?: number;
+    trailingAnnualDividendYield?: number;
+    dividendDate?: Date | string;
+    yield?: number;
+  };
+  calendarEvents?: {
+    exDividendDate?: Date | string;
+  };
+}
 
 interface YfDividendData {
+  amountPerShare: number;
+  dividendFrequency: string | null;
+  fxRateToJpy: number;
+  totalAmountJpy: number;
   yieldPct: number;
   nextExDate?: string;
 }
@@ -13,36 +35,142 @@ let _yfInstance: any = null;
 async function getYf() {
   if (!_yfInstance) {
     const YahooFinance = await import("yahoo-finance2");
-    _yfInstance = new YahooFinance.default();
+    // suppressNotices はコンストラクタオプションで渡す（インスタンスメソッドは存在しない）
+    _yfInstance = new YahooFinance.default({ suppressNotices: ['yahooSurvey'] });
   }
   return _yfInstance;
 }
 
-async function fetchDividendData(symbol: string, _assetType: string): Promise<YfDividendData> {
+function normalizeYfSymbol(symbol: string): string {
+  return /^\d{4,5}$/.test(symbol) ? `${symbol}.T` : symbol;
+}
+
+function formatYmd(dateLike: Date | string): string {
+  const d = new Date(dateLike);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(
+    d.getUTCDate()
+  ).padStart(2, "0")}`;
+}
+
+function roundYen(value: number): number {
+  return Math.round(value);
+}
+
+function paymentsPerYearFromFrequency(frequency: string | null): number {
+  switch ((frequency ?? "").toLowerCase()) {
+    case "monthly":
+      return 12;
+    case "quarterly":
+      return 4;
+    case "semi-annual":
+      return 2;
+    case "annual":
+    case "yearly":
+      return 1;
+    default:
+      return 1;
+  }
+}
+
+function inferDividendFrequency(events: YfDividendEvent[]): string | null {
+  if (events.length === 0) return null;
+  if (events.length >= 10) return "monthly";
+  if (events.length === 1) return "annual";
+  if (events.length === 2) return "semi-annual";
+
+  const dates = [...events]
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .map((e) => new Date(e.date).getTime());
+  const gaps = dates.slice(1).map((d, i) => (d - dates[i]) / (1000 * 60 * 60 * 24));
+  const avgGap = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+
+  if (avgGap <= 45) return "monthly";
+  if (avgGap <= 120) return "quarterly";
+  if (avgGap <= 220) return "semi-annual";
+  return "annual";
+}
+
+async function getFxRateToJpy(currency: string): Promise<number> {
+  if (currency === "JPY") return 1;
+  if (currency !== "USD") return 1;
+
+  try {
+    const market = await getMarketContext();
+    const usdJpy = market.indices.find((i) => i.symbol === "USDJPY=X");
+    if (usdJpy?.price && usdJpy.price > 0) {
+      return usdJpy.price;
+    }
+  } catch {
+    // fall through to direct quote
+  }
+
   try {
     const yf = await getYf();
+    const quote = (await withTimeout(
+      yf.quote("USDJPY=X", { fields: ["regularMarketPrice"] }),
+      "USDJPY=X"
+    ).catch(() => null)) as { regularMarketPrice?: number | null } | null;
+    const regularMarketPrice = quote?.regularMarketPrice ?? null;
+    return regularMarketPrice && regularMarketPrice > 0 ? regularMarketPrice : 1;
+  } catch {
+    return 1;
+  }
+}
 
-    // 日本株/ETF は 4〜5桁数字 → "{symbol}.T" 形式に変換
-    const yfSymbol = /^\d{4,5}$/.test(symbol) ? `${symbol}.T` : symbol;
+async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 10_000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`timeout: ${label}`)), timeoutMs)
+    ),
+  ]);
+}
 
-    // 10秒タイムアウト付きで quoteSummary を実行
-    const quoteSummary = await Promise.race([
-      yf.quoteSummary(yfSymbol, { modules: ["summaryDetail", "calendarEvents"] }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`timeout: ${yfSymbol}`)), 10000)
-      ),
+export async function fetchDividendData(holding: Pick<
+  HoldingItem,
+  "symbol" | "assetType" | "currency" | "quantity" | "valueJpy" | "dividendFrequency" | "nextExDividendDate"
+>): Promise<YfDividendData> {
+  try {
+    const yf = await getYf();
+    const yfSymbol = normalizeYfSymbol(holding.symbol);
+
+    const end = new Date();
+    const start = new Date(end);
+    start.setUTCDate(start.getUTCDate() - 370);
+    const period1 = formatYmd(start);
+    const period2 = formatYmd(end);
+
+    const [quoteSummaryRaw, dividendHistory, fxRateToJpy] = await Promise.all([
+      withTimeout(
+        yf.quoteSummary(yfSymbol, { modules: ["summaryDetail", "calendarEvents"] }),
+        `quoteSummary:${yfSymbol}`
+      ).catch(() => null as YfQuoteSummaryResult | null),
+      withTimeout(
+        yf.historical(yfSymbol, { period1, period2, events: "dividends" }),
+        `dividendHistory:${yfSymbol}`
+      ).catch(() => [] as YfDividendEvent[]),
+      getFxRateToJpy(holding.currency),
     ]);
+    const quoteSummary = quoteSummaryRaw as YfQuoteSummaryResult | null;
+
+    const events = Array.isArray(dividendHistory) ? dividendHistory : [];
+    const normalizedEvents = events
+      .map((event) => ({
+        date: event.date,
+        dividends: Number(event.dividends ?? 0),
+      }))
+      .filter((event) => event.dividends > 0);
+
+    const frequencyFromHistory = inferDividendFrequency(normalizedEvents);
+    const dividendFrequency =
+      frequencyFromHistory ?? holding.dividendFrequency ?? null;
+    const paymentsPerYear = paymentsPerYearFromFrequency(dividendFrequency);
+    const amountPerShare = normalizedEvents.length
+      ? normalizedEvents.reduce((sum, event) => sum + event.dividends, 0) / normalizedEvents.length
+      : 0;
 
     const detail = quoteSummary?.summaryDetail;
     const calendar = quoteSummary?.calendarEvents;
-
-    // ETF は summaryDetail.yield に入る場合があるため3段階フォールバック
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rawYield: number =
-      detail?.dividendYield ||
-      detail?.trailingAnnualDividendYield ||
-      (detail as any)?.yield ||
-      0;
 
     // 権利落ち日: calendarEvents.exDividendDate → summaryDetail.dividendDate の順でフォールバック
     const rawExDate = calendar?.exDividendDate ?? detail?.dividendDate;
@@ -53,9 +181,46 @@ async function fetchDividendData(symbol: string, _assetType: string): Promise<Yf
         })()
       : undefined;
 
-    return { yieldPct: rawYield * 100, nextExDate };
+    const yieldPctFromHistory =
+      holding.valueJpy > 0
+        ? ((amountPerShare * paymentsPerYear * holding.quantity * fxRateToJpy) / holding.valueJpy) * 100
+        : 0;
+
+    // 既存ロジックとの後方互換: 履歴が取れない場合は Yahoo の yield を使う
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rawYield: number =
+      detail?.dividendYield ||
+      detail?.trailingAnnualDividendYield ||
+      (detail as any)?.yield ||
+      0;
+
+    const annualEstimateJpyFromYield =
+      holding.assetType === "FUND" && rawYield === 0
+        ? holding.valueJpy * 0.04
+        : holding.valueJpy * rawYield;
+
+    const totalAmountJpy =
+      normalizedEvents.length > 0
+        ? roundYen(amountPerShare * holding.quantity * fxRateToJpy)
+        : roundYen(annualEstimateJpyFromYield / paymentsPerYear);
+
+    return {
+      amountPerShare: amountPerShare > 0 ? amountPerShare : totalAmountJpy / Math.max(holding.quantity * fxRateToJpy, 1),
+      dividendFrequency,
+      fxRateToJpy,
+      totalAmountJpy,
+      yieldPct: normalizedEvents.length > 0 ? yieldPctFromHistory : rawYield * 100,
+      nextExDate,
+    };
   } catch {
-    return { yieldPct: 0, nextExDate: undefined };
+    return {
+      amountPerShare: 0,
+      dividendFrequency: holding.dividendFrequency ?? null,
+      fxRateToJpy: holding.currency === "JPY" ? 1 : 1,
+      totalAmountJpy: 0,
+      yieldPct: 0,
+      nextExDate: undefined,
+    };
   }
 }
 
@@ -72,54 +237,57 @@ export function buildMonthlyBreakdown(
   for (const h of holdings) {
     if (h.annualEstJpy <= 0) continue;
 
-    if (h.assetType === "FUND") {
-      const freq = (h.dividendFrequency ?? "").toLowerCase();
-      
-      if (freq === "monthly") {
-        for (let m = 0; m < 12; m++) {
-          monthly[m] += h.annualEstJpy / 12;
-        }
-      } else if (freq === "annual" || freq === "yearly") {
-        const dateStr = h.nextExDividendDate ?? h.nextExDate;
-        if (dateStr) {
-          const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
-          monthly[exMonth] += h.annualEstJpy;
-        } else {
-          monthly[2] += h.annualEstJpy; // 3月フォールバック
-        }
-      } else if (freq === "semi-annual") {
-        const dateStr = h.nextExDividendDate ?? h.nextExDate;
-        if (dateStr) {
-          const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
-          monthly[exMonth] += h.annualEstJpy / 2;
-          monthly[(exMonth + 6) % 12] += h.annualEstJpy / 2;
-        } else {
-          monthly[2] += h.annualEstJpy / 2;  // 3月
-          monthly[8] += h.annualEstJpy / 2;  // 9月
-        }
-      } else if (freq === "quarterly") {
-        const dateStr = h.nextExDividendDate ?? h.nextExDate;
-        if (dateStr) {
-          const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
-          for (let i = 0; i < 4; i++) {
-            monthly[(exMonth + i * 3) % 12] += h.annualEstJpy / 4;
-          }
-        } else {
-          monthly[2]  += h.annualEstJpy / 4;
-          monthly[5]  += h.annualEstJpy / 4;
-          monthly[8]  += h.annualEstJpy / 4;
-          monthly[11] += h.annualEstJpy / 4;
+    const freq = (h.dividendFrequency ?? "").toLowerCase();
+    const dateStr = h.nextExDividendDate ?? h.nextExDate;
+
+    if (freq === "monthly") {
+      for (let m = 0; m < 12; m++) {
+        monthly[m] += h.annualEstJpy / 12;
+      }
+    } else if (freq === "annual" || freq === "yearly") {
+      if (dateStr) {
+        const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
+        monthly[exMonth] += h.annualEstJpy;
+      } else {
+        monthly[2] += h.annualEstJpy; // 3月フォールバック
+      }
+    } else if (freq === "semi-annual") {
+      if (dateStr) {
+        const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
+        monthly[exMonth] += h.annualEstJpy / 2;
+        monthly[(exMonth + 6) % 12] += h.annualEstJpy / 2;
+      } else {
+        monthly[2] += h.annualEstJpy / 2;  // 3月
+        monthly[8] += h.annualEstJpy / 2;  // 9月
+      }
+    } else if (freq === "quarterly") {
+      if (dateStr) {
+        const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
+        for (let i = 0; i < 4; i++) {
+          monthly[(exMonth + i * 3) % 12] += h.annualEstJpy / 4;
         }
       } else {
-        // freq 不明: nextExDate で年1回 or フォールバックで毎月分配
-        const dateStr = h.nextExDividendDate ?? h.nextExDate;
-        if (dateStr) {
-          const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
-          monthly[exMonth] += h.annualEstJpy;
-        } else {
-          for (let m = 0; m < 12; m++) {
-            monthly[m] += h.annualEstJpy / 12;
-          }
+        monthly[2]  += h.annualEstJpy / 4;
+        monthly[5]  += h.annualEstJpy / 4;
+        monthly[8]  += h.annualEstJpy / 4;
+        monthly[11] += h.annualEstJpy / 4;
+      }
+    } else if (freq) {
+      // 既知だが上記以外の頻度は年1回として扱う
+      if (dateStr) {
+        const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
+        monthly[exMonth] += h.annualEstJpy;
+      } else {
+        monthly[2] += h.annualEstJpy;
+      }
+    } else if (h.assetType === "FUND") {
+      // freq 不明の投信は、権利落ち日 or 毎月均等
+      if (dateStr) {
+        const exMonth = parseInt(dateStr.split("-")[1], 10) - 1;
+        monthly[exMonth] += h.annualEstJpy;
+      } else {
+        for (let m = 0; m < 12; m++) {
+          monthly[m] += h.annualEstJpy / 12;
         }
       }
     } else if (h.nextExDate) {
@@ -169,7 +337,7 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
 
   const dividendData = await Promise.all(
     investmentHoldings.map(async (h) => {
-      const data = await fetchDividendData(h.symbol, h.assetType);
+      const data = await fetchDividendData(h);
       return { ...h, ...data };
     })
   );
@@ -181,12 +349,26 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
       name: h.name,
       assetType: h.assetType,
       valueJpy: h.valueJpy,
-      annualEstJpy: h.assetType === "FUND" && h.yieldPct === 0
-        ? h.valueJpy * 0.04
-        : h.valueJpy * (h.yieldPct / 100),
+      quantity: h.quantity,
+      currency: h.currency,
+      amountPerShare: h.amountPerShare,
+      fxRateToJpy: h.fxRateToJpy,
+      totalAmountJpy: h.totalAmountJpy,
+      annualEstJpy:
+        h.dividendFrequency === "monthly"
+          ? h.totalAmountJpy * 12
+          : h.dividendFrequency === "quarterly"
+            ? h.totalAmountJpy * 4
+            : h.dividendFrequency === "semi-annual"
+              ? h.totalAmountJpy * 2
+              : h.dividendFrequency === "annual" || h.dividendFrequency === "yearly"
+                ? h.totalAmountJpy
+                : h.assetType === "FUND" && h.yieldPct === 0
+                  ? h.valueJpy * 0.04
+                  : h.valueJpy * (h.yieldPct / 100),
       yieldPct: h.yieldPct,
       nextExDate: h.nextExDate,
-      dividendFrequency: h.dividendFrequency,        // DB から
+      dividendFrequency: h.dividendFrequency,        // 履歴推定 or DB から
       nextExDividendDate: h.nextExDividendDate,      // DB から
     }));
 

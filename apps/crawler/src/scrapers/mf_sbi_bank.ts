@@ -39,6 +39,7 @@ export interface ScrapedHolding {
   nextExDividendDate?: string | null;
   distributionType?: string | null;
   lastDividendUpdate?: number | null;
+  currentPriceJpy?: number | null;
 }
 
 export interface ScrapedCreditWithdrawal {
@@ -54,6 +55,15 @@ export interface ScrapedData {
   categories: Partial<Record<AssetType, number>>;
   holdings: ScrapedHolding[];
   creditCardWithdrawals?: ScrapedCreditWithdrawal[];
+}
+
+function inferDividendFrequency(assetType: AssetType): string | null {
+  switch (assetType) {
+    case "STOCK_JP": return "semi-annual";
+    case "STOCK_US": return "quarterly";
+    case "FUND":     return "monthly";
+    default:         return null;
+  }
 }
 
 function loadCookiesFromDb(): string | undefined {
@@ -291,7 +301,7 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
       name: h.name,
       assetType: h.assetType,
       currency: h.assetType === "STOCK_US" ? "USD" : "JPY",
-      institutionName: h.institutionName ?? null,
+      institutionName: h.institutionName || null,
     });
     // unrealizedPnlPct: costBasisJpy がある場合はコスト基準、なければ valueJpy 基準で計算
     // (MF は取得単価を提供しないケースが多いため valueJpy ベースをフォールバックとして使用)
@@ -301,6 +311,16 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
         : h.valueJpy > 0 && h.unrealizedPnlJpy !== 0
           ? (h.unrealizedPnlJpy / (h.valueJpy - h.unrealizedPnlJpy)) * 100
           : 0;
+    // currentPriceJpy: スクレイパーから明示値があればそれを使用。
+    // なければ資産タイプ別に計算:
+    //   STOCK/FUND → valueJpy / quantity (quantity > 0 のとき)
+    //   CASH/PENSION/POINT → quantity=1 なので valueJpy そのもの
+    const currentPriceJpy =
+      h.currentPriceJpy != null
+        ? h.currentPriceJpy
+        : (h.assetType === "STOCK_JP" || h.assetType === "STOCK_US" || h.assetType === "FUND")
+          ? h.quantity > 0 ? h.valueJpy / h.quantity : null
+          : h.valueJpy;
     snapshotsRepo.upsertSnapshot({
       assetId,
       date: today,
@@ -311,13 +331,14 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
       costPerUnitJpy: h.costPerUnitJpy,
       unrealizedPnlJpy: h.unrealizedPnlJpy,
       unrealizedPnlPct,
-      dividendFrequency: h.dividendFrequency ?? null,
+      dividendFrequency: h.dividendFrequency ?? inferDividendFrequency(h.assetType),
       dividendAmount: h.dividendAmount ?? null,
       dividendRate: h.dividendRate ?? null,
       exDividendDate: h.exDividendDate ?? null,
       nextExDividendDate: h.nextExDividendDate ?? null,
       distributionType: h.distributionType ?? null,
       lastDividendUpdate: h.lastDividendUpdate ?? null,
+      currentPriceJpy,
     });
   }
 

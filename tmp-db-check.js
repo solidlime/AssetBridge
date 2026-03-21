@@ -1,0 +1,14 @@
+const Database = require('better-sqlite3');
+const db = new Database('data/assetbridge_v2.db');
+const total = db.prepare('SELECT SUM(current_value_jpy) as total FROM assets WHERE is_active = 1').get();
+console.log('総資産:', total.total);
+const assets = db.prepare('SELECT name, asset_type, institution_name, current_value_jpy FROM assets WHERE is_active = 1 ORDER BY current_value_jpy DESC LIMIT 10').all();
+console.log('資産TOP10:', JSON.stringify(assets, null, 2));
+const mystery = db.prepare("SELECT * FROM assets WHERE name LIKE '%<%' OR name LIKE '%>%'").all();
+console.log('謎の銘柄(< or > 含む):', mystery.length, '件');
+if(mystery.length > 0) console.log('謎の銘柄詳細:', JSON.stringify(mystery.slice(0,3), null, 2));
+const cc = db.prepare('SELECT * FROM credit_cards').all();
+console.log('クレカ件数:', cc.length);
+console.log('クレカ:', JSON.stringify(cc, null, 2));
+const mapping = db.prepare('SELECT * FROM credit_card_withdrawals LIMIT 5').all();
+console.log('クレカ引き落とし:', JSON.stringify(mapping, null, 2));

@@ -115,3 +115,42 @@ expect(item.costPerUnitJpy).toBeGreaterThan(0);
 ## スキル自律改定ルール（2026-03-20、CLAUDE.md 追加済み）
 
 - ミス発生時に即時・簡潔にスキルを改定してよい（冗長化禁止）
+
+## セッション教訓（2026-03）
+
+### PM2 web プロセスが起動しない場合
+- `logs/web.log` が存在しない = 一度も起動できていない証拠
+- よくある原因: `.next` ビルドなし・型エラー・PM2 が stopped 状態（restart ループ後）
+- 確認手順: `pm2 list` → `pm2 logs web --err` → `pnpm --filter @assetbridge/web type-check`
+- ecosystem.config.cjs のパス設定自体は正しい（変更不要）
+
+### dividendFrequency 配線忘れパターン
+- ロジック実装済み・DB スキーマあり・API あり → フロント表示なし = 「配線忘れ」が多い
+- `apps/crawler/src/scrapers/mf_sbi_bank.ts` の upsertSnapshot 引数を要確認
+- assetType 別デフォルト: STOCK_JP=semi-annual / STOCK_US=quarterly / FUND=monthly
+
+### スクレイパー スクショ保存
+- `SAVE_SNAPSHOTS=1` 環境変数で `data/snapshots/YYYY-MM-DD/*.png` に保存
+- `console.error` を使う（stdout はプロトコル通信に使用済み）
+- クレカ 0 件問題: MF の HTML 変更でセレクタが壊れやすい → スクショで構造を目視確認
+
+### クリーンアップ方針
+- ルート直下のデバッグ用 `.ts` スクリプトは `scripts/` に移動 or 削除
+- `playwright.config.ts` は `tests/e2e/` が存在する場合は残す
+
+## バグ修正記録（2026-03-21）
+
+### 謎の銘柄の根本修正（2026-03-21）
+- 原因: browser-scraper.mjs 690行目付近、MFページネーション行（5列）に ‹ (U+2039) が混入
+- 修正: テーブル単位で走査し、5列行（CASH/POINT行）を明示的にスキップ
+- DBの既存不正データ（‹[22], ‹[15], ‹[29]）を DELETE文で削除
+
+### クレカ3枚取得の修正（2026-03-21）
+- PayPay/三井住友/楽天カード3枚を正しく取得するよう crawler を修正
+- credit_card_withdrawals に bank_account カラムを ALTER TABLE で追加
+
+### currentPriceJpy の実装（2026-03-21）
+- current_price_jpy カラムを holdings テーブルに追加（DB: ALTER TABLE）
+- API の portfolio/holdings エンドポイントに currentPriceJpy フィールドを追加
+- データはスクレイプ後に入力される（現在 NULL は正常）
+- cc-account-mapping は 14件アカウント確認済み

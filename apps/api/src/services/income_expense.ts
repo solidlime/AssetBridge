@@ -8,6 +8,7 @@ export interface CreditWithdrawal {
   cardName: string;
   withdrawalDate: string;
   amountJpy: number;
+  bankAccount: string | null;
   status: "scheduled" | "withdrawn";
   scrapedAt: string;
 }
@@ -57,6 +58,7 @@ export async function getUpcomingWithdrawals(_days: number): Promise<UpcomingWit
     cardName: r.cardName,
     withdrawalDate: r.withdrawalDate,
     amountJpy: r.amountJpy,
+    bankAccount: r.bankAccount ?? null,
     status: r.status as "scheduled" | "withdrawn",
     scrapedAt: r.scrapedAt,
   }));
@@ -83,6 +85,7 @@ export async function getAllWithdrawals(limit: number): Promise<CreditWithdrawal
     cardName: r.cardName,
     withdrawalDate: r.withdrawalDate,
     amountJpy: r.amountJpy,
+    bankAccount: r.bankAccount ?? null,
     status: r.status as "scheduled" | "withdrawn",
     scrapedAt: r.scrapedAt,
   }));

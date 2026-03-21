@@ -19,6 +19,7 @@ export const portfolioSnapshots = sqliteTable("portfolio_snapshots", {
   nextExDividendDate:  text("next_ex_dividend_date"),
   distributionType:    text("distribution_type"),
   lastDividendUpdate:  integer("last_dividend_update"),
+  currentPriceJpy:     real("current_price_jpy"),
 }, (t) => [
   uniqueIndex("uq_snapshot").on(t.assetId, t.date),
   index("ix_snapshot_date").on(t.date),

@@ -1,4 +1,4 @@
-import { trpc } from "@/lib/trpc";
+﻿import { trpc } from "@/lib/trpc";
 import { formatJpy } from "@/lib/format";
 import IncomeExpenseChart from "@/components/charts/IncomeExpenseChart";
 
@@ -11,6 +11,7 @@ type CreditWithdrawal = {
   amountJpy: number;
   status: "scheduled" | "withdrawn";
   scrapedAt: string;
+  bankAccount?: string;
 };
 
 type UpcomingWithdrawalsResult = {
@@ -42,9 +43,30 @@ export default async function IncomeExpensePage() {
   // クレカ引き落とし予定（60日以内）
   let upcomingResult: UpcomingWithdrawalsResult | null = null;
   let withdrawalError: string | null = null;
+  // カード→口座名マッピング（getCcBalanceStatus から構築）
+  const accountNameMap: Record<string, string> = {};
 
   try {
-    upcomingResult = await trpc.incomeExpense.upcomingWithdrawals.query({ days: 60 }) as unknown as UpcomingWithdrawalsResult;
+    const [withdrawalsData, balanceStatus] = await Promise.all([
+      trpc.incomeExpense.upcomingWithdrawals.query({ days: 60 }) as unknown as UpcomingWithdrawalsResult,
+      trpc.incomeExpense.getCcBalanceStatus.query().catch(() => null),
+    ]);
+    // 口座名マップを構築
+    if (balanceStatus?.summary) {
+      for (const item of balanceStatus.summary) {
+        if (item.accountName) {
+          accountNameMap[item.cardName] = item.accountName;
+        }
+      }
+    }
+    // withdrawals に bankAccount を付与
+    upcomingResult = {
+      ...withdrawalsData,
+      withdrawals: withdrawalsData.withdrawals.map((w) => ({
+        ...w,
+        bankAccount: accountNameMap[w.cardName],
+      })),
+    };
   } catch (e) {
     withdrawalError = e instanceof Error ? e.message : "引き落とし情報の取得に失敗しました";
   }
@@ -92,6 +114,7 @@ export default async function IncomeExpensePage() {
                     <th style={{ textAlign: "left", padding: "8px 0" }}>カード名</th>
                     <th style={{ textAlign: "center", padding: "8px 0" }}>引き落とし日</th>
                     <th style={{ textAlign: "center", padding: "8px 0" }}>残り日数</th>
+                     <th style={{ textAlign: "left", padding: "8px 12px" }}>口座</th>
                     <th style={{ textAlign: "right", padding: "8px 0" }}>金額</th>
                     <th style={{ textAlign: "center", padding: "8px 0" }}>状態</th>
                   </tr>
@@ -109,6 +132,7 @@ export default async function IncomeExpensePage() {
                         <td style={{ textAlign: "center", padding: "10px 0", color: urgentColor }}>
                           {days === 0 ? "今日" : days > 0 ? `${days}日後` : `${Math.abs(days)}日前`}
                         </td>
+                        <td style={{ padding: "10px 0", paddingLeft: 12, color: "#94a3b8" }}>{w.bankAccount ?? '—'}</td>
                         <td style={{ textAlign: "right", padding: "10px 0", color: "#f87171", fontWeight: 600 }}>
                           {formatJpy(w.amountJpy)}
                         </td>

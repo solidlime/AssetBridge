@@ -25,6 +25,7 @@ export class SnapshotsRepo {
           nextExDividendDate: data.nextExDividendDate,
           distributionType: data.distributionType,
           lastDividendUpdate: data.lastDividendUpdate,
+          currentPriceJpy: data.currentPriceJpy,
         },
       })
       .run();

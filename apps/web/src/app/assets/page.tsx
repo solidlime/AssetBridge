@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -17,6 +17,7 @@ type Holding = {
   priceJpy: number;
   costBasisJpy: number;
   costPerUnitJpy: number;
+  currentPriceJpy?: number;
   unrealizedPnlJpy: number;
   unrealizedPnlPct: number;
   assetType: string;
@@ -181,7 +182,7 @@ function AssetModal({ holding, onClose }: ModalProps) {
             { label: "評価額", value: formatJpy(holding.valueJpy) },
             { label: "数量", value: String(holding.quantity) },
             { label: "現在価格", value: formatPrice(holding.priceJpy, holding.currency) },
-            { label: "取得単価", value: formatPrice(holding.costPerUnitJpy, holding.currency) },
+            { label: "取得単価", value: (holding.assetType === 'pension' || holding.assetType === 'point') ? '—' : formatPrice(holding.costPerUnitJpy, holding.currency) },
             { label: "含み損益", value: `${pnlSign}${formatJpy(Math.abs(holding.unrealizedPnlJpy))}`, color: pnlColor },
             { label: "損益率", value: `${pnlSign}${holding.unrealizedPnlPct.toFixed(2)}%`, color: pnlColor },
           ].map(({ label, value, color }) => (
@@ -247,6 +248,7 @@ function AssetsPageInner() {
                 priceJpy: item.priceJpy,
                 costBasisJpy: item.costBasisJpy,
                 costPerUnitJpy: item.costPerUnitJpy,
+                currentPriceJpy: item.currentPriceJpy,
                 unrealizedPnlJpy: item.unrealizedPnlJpy,
                 unrealizedPnlPct: item.unrealizedPnlPct,
                 assetType: item.assetType,
@@ -255,6 +257,7 @@ function AssetsPageInner() {
                 valueDiffJpy: (item as { valueDiffJpy?: number | null }).valueDiffJpy ?? null,
                 valueDiffPct: (item as { valueDiffPct?: number | null }).valueDiffPct ?? null,
                 priceDiffPct: (item as { priceDiffPct?: number | null }).priceDiffPct ?? null,
+                institutionName: item.institutionName,
               }))
             : [];
           // オリジナルデータをRefに保存（ソートは常にこのRefのコピーから行う）
@@ -392,6 +395,7 @@ function AssetsPageInner() {
                 <SortHeader label="銘柄" sortKeyTarget="name" align="left" />
                 <SortHeader label="数量" sortKeyTarget="quantity" />
                 <SortHeader label="取得単価" sortKeyTarget="costPerUnitJpy" />
+                <th style={{ textAlign: "right", padding: "8px 0", whiteSpace: "nowrap" }}>現在値</th>
                 <SortHeader label="評価額" sortKeyTarget="valueJpy" />
                 <SortHeader label="損益" sortKeyTarget="unrealizedPnlJpy" />
                 <SortHeader label="損益率" sortKeyTarget="unrealizedPnlPct" />
@@ -442,7 +446,15 @@ function AssetsPageInner() {
                       <div style={{ fontSize: 12, color: "#94a3b8" }}>{h.name}</div>
                     </td>
                     <td style={{ textAlign: "right", padding: "10px 0" }}>{h.quantity}</td>
-                    <td style={{ textAlign: "right", padding: "10px 0" }}>{formatPrice(h.costPerUnitJpy, h.currency)}</td>
+                    <td style={{ textAlign: "right", padding: "10px 0" }}>{(h.assetType === 'pension' || h.assetType === 'point') ? '—' : formatPrice(h.costPerUnitJpy, h.currency)}</td>
+                     <td style={{ textAlign: "right", padding: "10px 0", color: "#94a3b8" }}>
+                       {(h.assetType === 'CASH' || h.assetType === 'PENSION' || h.assetType === 'POINT' ||
+                         h.assetType === 'cash' || h.assetType === 'pension' || h.assetType === 'point')
+                         ? '—'
+                         : h.currentPriceJpy != null
+                           ? formatJpy(h.currentPriceJpy)
+                           : '—'}
+                     </td>
                     <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(h.valueJpy)}</td>
                     <td style={{ textAlign: "right", padding: "10px 0", color: pnlColor }}>
                       {pnlSign}{formatJpy(Math.abs(h.unrealizedPnlJpy))}

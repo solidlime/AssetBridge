@@ -20,6 +20,7 @@ type DbRow = {
     dividendAmount: number | null;
     dividendRate: number | null;
     nextExDividendDate: string | null;
+    currentPriceJpy: number | null;
   };
   assets: {
     symbol: string;
@@ -112,6 +113,7 @@ export function mapToHoldingItems(
       quantity: r.portfolio_snapshots.quantity,
       priceJpy: r.portfolio_snapshots.priceJpy,
       costPerUnitJpy: r.portfolio_snapshots.costPerUnitJpy,
+      currentPriceJpy: r.portfolio_snapshots.currentPriceJpy ?? undefined,
       valueDiffJpy,
       valueDiffPct,
       priceDiffPct: quotes.get(r.assets.symbol) ?? null,
@@ -260,6 +262,7 @@ export async function getHoldings(filter: {
         dividendAmount: portfolioSnapshots.dividendAmount,
         dividendRate: portfolioSnapshots.dividendRate,
         nextExDividendDate: portfolioSnapshots.nextExDividendDate,
+        currentPriceJpy: portfolioSnapshots.currentPriceJpy,
       },
       assets: {
         symbol: assets.symbol,

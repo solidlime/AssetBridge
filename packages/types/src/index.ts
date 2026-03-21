@@ -35,6 +35,7 @@ export interface HoldingItem {
   quantity: number;
   priceJpy: number;
   costPerUnitJpy: number;
+  currentPriceJpy?: number;
   valueDiffJpy: number | null;
   valueDiffPct: number | null;
   priceDiffPct: number | null;
@@ -83,10 +84,15 @@ export interface DividendHolding {
   name: string;
   assetType: AssetType;
   valueJpy: number;
+  amountPerShare?: number;
+  quantity?: number;
+  currency?: string;
+  fxRateToJpy?: number;
+  totalAmountJpy?: number;
   annualEstJpy: number;
   yieldPct: number;
   nextExDate?: string;
-  dividendFrequency?: string;
+  dividendFrequency?: string | null;
   nextExDividendDate?: string;
 }
 

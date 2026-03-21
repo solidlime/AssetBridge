@@ -9,6 +9,10 @@ async function fetchMarketIndices(): Promise<MarketIndex[]> {
   try {
     // yahoo-finance2 は ESM モジュールのため dynamic import で読み込む
     const yf = await import("yahoo-finance2");
+    const YahooFinance = yf.default as unknown as new (opts?: { suppressNotices?: string[] }) => {
+      quote: (symbol: string) => Promise<Record<string, number>>;
+    };
+    const yfInstance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
     const symbols = ["^N225", "^GSPC", "^TPX", "USDJPY=X"];
     const names: Record<string, string> = {
       "^N225": "日経225",
@@ -18,7 +22,7 @@ async function fetchMarketIndices(): Promise<MarketIndex[]> {
     };
 
     const results = await Promise.allSettled(
-      symbols.map((s) => (yf.default as unknown as { quote: (s: string) => Promise<unknown> }).quote(s))
+      symbols.map((s) => yfInstance.quote(s))
     );
 
     return results

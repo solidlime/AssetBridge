@@ -251,7 +251,7 @@ export function parseCardBlock(blockText) {
     }
   }
 
-  // 引き落とし口座: 2段階 regex で抽出
+  // 引き落とし口座: 3段階 regex で抽出
   let bankAccount = undefined;
   const bankStep1 = blockText.match(/引き落とし|ご返済.*?(?:口座|銀行)[\s：:]*([^\n※]+)/i);
   if (bankStep1?.[1]) {
@@ -260,6 +260,13 @@ export function parseCardBlock(blockText) {
     const bankStep2 = blockText.match(/([^\n]*銀行[^\n]*)/i);
     if (bankStep2?.[1]) {
       bankAccount = bankStep2[1].trim() || undefined;
+    } else {
+      // マスクされた口座ID・ログインIDを bankAccount として使用
+      // 例: "080********", "sol******", "user@example.c****"
+      const lastLine = lines[lines.length - 1] ?? '';
+      if (/\*{3,}/.test(lastLine)) {
+        bankAccount = lastLine;
+      }
     }
   }
 
@@ -267,49 +274,84 @@ export function parseCardBlock(blockText) {
 }
 
 /**
- * アンカーリンク経由でクレカ情報を取得 (BASE_URL トップページ専用)
- * 「金融機関サービスサイトへ」アンカーを起点にカードブロックを解析する。
+ * アンカーリンク経由でクレカ情報を取得
+ * BASE_URL と /bs/portfolio の左カラムを対象に「金融機関サービスサイトへ」
+ * アンカーを起点にカードブロックを解析する。3枚未満の場合は次の URL を試みる。
  * @param {import('playwright').Page} page
  * @returns {Promise<{cardName:string, withdrawalDate:string|null, amountJpy:number, status:string}[]>}
  */
 export async function scrapeCardsByAnchor(page) {
   const results = [];
-  try {
-    await page.goto(BASE_URL, { waitUntil: "networkidle", timeout: 20000 });
-    await new Promise(r => setTimeout(r, 3000));
-    process.stderr.write(`[browser-scraper] scrapeCardsByAnchor: URL=${page.url()}\n`);
+  // BASE_URL と /bs/portfolio の左カラムを順番に試みる
+  // /bs/portfolio はすべてのクレカが左カラムに表示される
+  const urlsToTry = [BASE_URL, `${BASE_URL}/bs/portfolio`];
 
-    const cardBlocks = await page.evaluate(() => {
-      // 「金融機関サービスサイトへ」リンクを全て取得 → 各カードの起点
-      const anchors = Array.from(document.querySelectorAll('a'));
-      const cardAnchors = anchors.filter(a => a.textContent.includes('金融機関サービスサイトへ'));
-      return cardAnchors.map(a => {
-        // カード名はアンカーの親要素のテキスト or 直前のテキスト
-        const wrapper = a.closest('.account-item-detail-table, .account-item, li, section')
-          || a.parentElement?.closest('.account-item-detail-table, .account-item, li, section')
-          || a.parentElement;
-        return wrapper ? wrapper.innerText : '';
+  for (const url of urlsToTry) {
+    if (results.length >= 3) break; // 3枚取得済みなら終了
+    try {
+      await page.goto(url, { waitUntil: "networkidle", timeout: 20000 });
+      await new Promise(r => setTimeout(r, 3000));
+      process.stderr.write(`[browser-scraper] scrapeCardsByAnchor: URL=${page.url()}\n`);
+
+      const cardBlocks = await page.evaluate(() => {
+        // 「金融機関サービスサイトへ」リンクを全て取得 → 各カードの起点
+        const anchors = Array.from(document.querySelectorAll('a'));
+        const cardAnchors = anchors.filter(a => a.textContent.includes('金融機関サービスサイトへ'));
+        return cardAnchors.map(a => {
+          // section は複数カードを内包する可能性が高いため使わない。
+          // Step 1: li が最も個別カードを正確に囲む（ul>li 構造）
+          let wrapper = a.closest('li');
+          // Step 2: account 系クラス（li が見つからない場合）
+          if (!wrapper) {
+            wrapper = a.closest(
+              '.account-item-detail-table, .account-item, [class*="account-item"], [class*="account_item"]'
+            );
+          }
+          // Step 3: DOM を 5 段上がって li または account/card 系クラスを探す（section は対象外）
+          if (!wrapper) {
+            let el = a.parentElement;
+            for (let i = 0; i < 5 && el; i++, el = el.parentElement) {
+              const tag = el.tagName;
+              const cls = (el.className || '').toLowerCase();
+              if (tag === 'LI') { wrapper = el; break; }
+              if (cls.includes('account') || cls.includes('card-info') || cls.includes('service-account')) {
+                wrapper = el; break;
+              }
+            }
+          }
+          // Step 4: 絶対フォールバック（親要素 2〜3 段上、section には届きにくい）
+          if (!wrapper) {
+            wrapper = a.parentElement?.parentElement?.parentElement
+              || a.parentElement?.parentElement
+              || a.parentElement;
+          }
+          return wrapper ? wrapper.innerText : '';
+        });
       });
-    });
 
-    process.stderr.write(`[browser-scraper] Card anchors found: ${cardBlocks.length}\n`);
-    for (let i = 0; i < cardBlocks.length; i++) {
-      process.stderr.write(`[browser-scraper] Card block[${i}]: ${cardBlocks[i].slice(0, 300)}\n`);
-    }
-
-    for (const blockText of cardBlocks) {
-      const parsed = parseCardBlock(blockText);
-      if (parsed) {
-        process.stderr.write(`[browser-scraper] Parsed card: ${JSON.stringify(parsed)}\n`);
-        results.push(parsed);
-      } else {
-        process.stderr.write(`[browser-scraper] parseCardBlock returned null for block: ${blockText.slice(0, 100)}\n`);
+      process.stderr.write(`[browser-scraper] Card anchors found: ${cardBlocks.length} on ${url}\n`);
+      for (let i = 0; i < cardBlocks.length; i++) {
+        process.stderr.write(`[browser-scraper] Card block[${i}]: ${cardBlocks[i].slice(0, 300)}\n`);
       }
-    }
 
-    process.stderr.write(`[browser-scraper] Credit withdrawals found on ${BASE_URL}: ${results.length}\n`);
-  } catch (e) {
-    process.stderr.write(`[browser-scraper] scrapeCardsByAnchor error: ${e.message}\n`);
+      const seen = new Set(results.map(r => r.cardName));
+      for (const blockText of cardBlocks) {
+        const parsed = parseCardBlock(blockText);
+        if (parsed) {
+          if (!seen.has(parsed.cardName)) {
+            seen.add(parsed.cardName);
+            process.stderr.write(`[browser-scraper] Parsed card: ${JSON.stringify(parsed)}\n`);
+            results.push(parsed);
+          }
+        } else {
+          process.stderr.write(`[browser-scraper] parseCardBlock returned null for block: ${blockText.slice(0, 100)}\n`);
+        }
+      }
+
+      process.stderr.write(`[browser-scraper] Credit withdrawals so far: ${results.length} (url=${url})\n`);
+    } catch (e) {
+      process.stderr.write(`[browser-scraper] scrapeCardsByAnchor error on ${url}: ${e.message}\n`);
+    }
   }
   return results;
 }
@@ -536,17 +578,54 @@ async function scrapePortfolio(page) {
   const holdings = [];
 
   // page.evaluate() で全テーブルデータを一括取得（IPC ラウンドトリップを最小化）
+  // NOTE: 旧実装の「全テーブル tr 一括 querySelectorAll」ではなくテーブル単位で走査し、
+  //       各テーブルの直前セクション見出しと tableIndex を付与する。
+  //       こうすることでサマリーテーブル → 個別保有テーブルの境界を Node.js 側で検知でき、
+  //       currentCategory が前テーブルの末尾カテゴリ（POINT 等）に汚染されるバグを防ぐ。
   const tableData = await page.evaluate(() => {
     const results = [];
-    const rows = document.querySelectorAll("table tr");
-    for (const row of rows) {
-      const cells = row.querySelectorAll("td, th");
-      const cellTexts = Array.from(cells).map(c => c.innerText.trim());
-      // カテゴリ行（th>a）のリンクテキストも取得
-      const thAnchor = row.querySelector("th a");
-      const thAnchorText = thAnchor ? thAnchor.innerText.trim() : null;
-      results.push({ cellTexts, thAnchorText });
-    }
+    const allTables = Array.from(document.querySelectorAll('table'));
+
+    allTables.forEach((table, tableIdx) => {
+      // 各テーブルの直前セクション見出し（h2-h6）を複数パターンで探す
+      let sectionHeading = null;
+
+      // パターン1: テーブルの直前の兄弟要素を最大5つ遡って見出しを探す
+      let el = table.previousElementSibling;
+      for (let i = 0; i < 5 && el && !sectionHeading; i++, el = el.previousElementSibling) {
+        if (/^H[2-6]$/.test(el.tagName)) {
+          sectionHeading = el.innerText.trim();
+        }
+      }
+
+      // パターン2: テーブルを囲む section / asset系 div の内部見出しを探す
+      if (!sectionHeading) {
+        const container = table.closest('section, [class*="asset"], [class*="category"], [class*="section"]');
+        if (container) {
+          const heading = container.querySelector('h2, h3, h4, h5, h6');
+          if (heading) sectionHeading = heading.innerText.trim();
+        }
+      }
+
+      // パターン3: 親要素の直前兄弟を3つ遡って見出しを探す
+      if (!sectionHeading && table.parentElement) {
+        let pel = table.parentElement.previousElementSibling;
+        for (let i = 0; i < 3 && pel && !sectionHeading; i++, pel = pel.previousElementSibling) {
+          if (/^H[2-6]$/.test(pel.tagName)) sectionHeading = pel.innerText.trim();
+        }
+      }
+
+      for (const row of table.querySelectorAll('tr')) {
+        const cells = row.querySelectorAll('td, th');
+        const cellTexts = Array.from(cells).map(c => c.innerText.trim());
+        // カテゴリ行・金融機関行のリンクテキストを取得
+        // th>a を優先し、次に td:first-child>a も確認（MF の一部ページは td にリンクを置く）
+        const thAnchor = row.querySelector('th a') || row.querySelector('td:first-child a');
+        const thAnchorText = thAnchor ? thAnchor.innerText.trim() : null;
+        results.push({ cellTexts, thAnchorText, tableIndex: tableIdx, sectionHeading });
+      }
+    });
+
     return results;
   });
 
@@ -595,8 +674,38 @@ async function scrapePortfolio(page) {
   let currentInstitution = "";
   let lastCashInstitution = ""; // CASH専用: POINTセクション通過後の汚染を防ぐ
   let currentCategory = "CASH";
+  let lastTableIndex = -1; // テーブル境界検知用
 
-  for (const { cellTexts, thAnchorText } of tableData) {
+  for (const { cellTexts, thAnchorText, tableIndex, sectionHeading } of tableData) {
+    // ── テーブル境界リセット ──────────────────────────────────────────────────
+    // 新しいテーブルに入ったとき:
+    //   1) currentInstitution / lastCashInstitution をリセット
+    //   2) テーブル直前のセクション見出しが CATEGORY_MAP に一致すれば currentCategory を更新
+    //      → サマリーテーブルの末尾カテゴリ（POINT 等）が後続の保有テーブルに残留するバグを防ぐ
+    if (tableIndex !== lastTableIndex) {
+      lastTableIndex = tableIndex;
+      currentInstitution = "";
+      lastCashInstitution = "";
+
+      if (sectionHeading) {
+        // 完全一致を先に試みる
+        const catFromHeading = CATEGORY_MAP[sectionHeading];
+        if (catFromHeading) {
+          currentCategory = catFromHeading;
+          process.stderr.write(`[browser-scraper] Table[${tableIndex}] heading="${sectionHeading}" → category=${currentCategory}\n`);
+        } else {
+          // 部分一致（見出しにカテゴリキーが含まれる場合）
+          for (const [key, val] of Object.entries(CATEGORY_MAP)) {
+            if (sectionHeading.includes(key)) {
+              currentCategory = val;
+              process.stderr.write(`[browser-scraper] Table[${tableIndex}] heading contains "${key}" → category=${currentCategory}\n`);
+              break;
+            }
+          }
+        }
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
     const count = cellTexts.length;
 
     if (count >= 2 && count <= 4) {
@@ -671,7 +780,7 @@ async function scrapePortfolio(page) {
           assetType: resolvedType,
           valueJpy, unrealizedPnlJpy,
           quantity, priceJpy, costBasisJpy, costPerUnitJpy,
-          institutionName: currentInstitution || currentCategory,
+          institutionName: currentInstitution ?? null,
           dividendFrequency: null,
           dividendAmount: null,
           dividendRate: null,
@@ -693,7 +802,7 @@ async function scrapePortfolio(page) {
           symbol: "", name: fullName, assetType: currentCategory,
           valueJpy: balance, unrealizedPnlJpy: 0,
           quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
-          institutionName: currentInstitution || currentCategory,
+          institutionName: currentInstitution ?? null,
           dividendFrequency: null,
           dividendAmount: null,
           dividendRate: null,
@@ -723,7 +832,7 @@ async function scrapePortfolio(page) {
           symbol: "", name: fullName, assetType: currentCategory,
           valueJpy: balance, unrealizedPnlJpy: 0,
           quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
-          institutionName: currentInstitution || currentCategory,
+          institutionName: currentInstitution ?? null,
           dividendFrequency: null,
           dividendAmount: null,
           dividendRate: null,

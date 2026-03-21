@@ -18,11 +18,19 @@ type DividendHolding = {
   valueJpy: number;
   yieldPct: number;
   annualEstJpy: number;
+  dividendFrequency?: string;
   nextExDate?: string;
 };
 
 type SortKey = "name" | "valueJpy" | "yieldPct" | "annualEstJpy" | "nextExDate";
 type SortDir = "asc" | "desc";
+
+const FREQ_LABEL: Record<string, string> = {
+  monthly: '毎月',
+  quarterly: '四半期',
+  'semi-annual': '半期',
+  annual: '年1回',
+};
 
 const MONTH_LABELS = [
   "1月", "2月", "3月", "4月", "5月", "6月",
@@ -237,6 +245,7 @@ export default function DividendsPage() {
                 <SortHeader label="予想利回り" sortKeyTarget="yieldPct" />
                 <SortHeader label="年間予想額" sortKeyTarget="annualEstJpy" />
                 <SortHeader label="権利落ち日" sortKeyTarget="nextExDate" />
+                <th style={{ textAlign: "right", padding: "10px 0", cursor: "default" }}>配当頻度</th>
               </tr>
             </thead>
             <tbody>
@@ -253,6 +262,9 @@ export default function DividendsPage() {
                   <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(h.annualEstJpy)}</td>
                   <td style={{ textAlign: "right", padding: "10px 0", color: "#94a3b8" }}>
                     {h.nextExDate ?? "—"}
+                  </td>
+                  <td style={{ textAlign: "right", padding: "10px 0", color: "#94a3b8" }}>
+                    {h.dividendFrequency ? (FREQ_LABEL[h.dividendFrequency] ?? h.dividendFrequency) : "—"}
                   </td>
                 </tr>
               ))}
