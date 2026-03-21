@@ -216,6 +216,16 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
   const snapshotsRepo = new SnapshotsRepo(db);
   const dailyRepo = new DailyTotalsRepo(db);
 
+  // 根本修正: POINT の institution_name を事前に name → institution_name で保存しておく。
+  // browser-scraper.mjs は CASH テーブルの institution_name を取得できないケースがあるため、
+  // 同名 POINT の institution_name を CASH にフォールバックとして使う。
+  const pointInstitutionByName = new Map<string, string>();
+  for (const h of data.holdings) {
+    if (h.assetType === "POINT" && h.institutionName) {
+      pointInstitutionByName.set(h.name, h.institutionName);
+    }
+  }
+
   // 重複排除: 同じ名前で複数のエントリがある場合、証券コード(STOCK_JP/STOCK_US/FUND)を優先して
   // 銘柄名ベースのCASHエントリを除外する
   const holdingsByName = new Map<string, ScrapedHolding>();
@@ -238,6 +248,19 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
     }
   }
   const deduplicatedHoldings = Array.from(holdingsByName.values());
+
+  // CASH の institution_name が未設定の場合、同名 POINT から継承する
+  // (MF 画面では同一残高が CASH/POINT 両テーブルに表示されるが、POINT テーブルの方が
+  //  金融機関名を確実に取得できるため、CASH のフォールバックとして利用する)
+  for (const h of deduplicatedHoldings) {
+    if (h.assetType === "CASH" && !h.institutionName) {
+      const fallback = pointInstitutionByName.get(h.name);
+      if (fallback) {
+        h.institutionName = fallback;
+        process.stderr.write(`[mf_sbi_bank] CASH "${h.name}": institution_name を POINT から継承 → "${fallback}"\n`);
+      }
+    }
+  }
 
   // categories["STOCK_US"] が MF の UI 構造上取得できないため、holdings から補完
   // (MF は全株式を "株式（現物）" = STOCK_JP としてまとめて表示するため STOCK_US は 0 になる)
