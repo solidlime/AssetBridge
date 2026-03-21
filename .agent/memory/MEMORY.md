@@ -172,13 +172,15 @@ expect(item.costPerUnitJpy).toBeGreaterThan(0);
 - 原因: `cardName` 単独キーで、同名カードの別月引き落としが消えていた
 - 修正: `cardName|withdrawalDate|amountJpy` 複合キーに変更
 
-### 金融機関名取得失敗の根本修正
-- 原因1: sectionHeading 取得で MF 固有コンテナ（account/group 系 div）を見ていなかった
-- 原因2: count=1 の colspan 行（金融機関名ヘッダ行）をスキップしていた
-- 原因3: ページネーションボタン（‹/›）が金融機関名として誤判定
-- 修正: パターン4/5 追加、count=1 対応、ページネーションフィルタ強化
-- **重要**: フォールバックは使わず、`/bs/portfolio` からの直接取得を維持すること
-- 検証: 次回スクレイプで `[browser-scraper] institution from heading=` または `institution(colspan)` ログが出れば成功
+### 金融機関名取得失敗の根本修正（2段階修正）
+- 第1回修正: sectionHeading パターン4/5 追加、count=1 colspan対応、ページネーションフィルタ強化
+- **第2回修正（2026-03-22）: DB 全15件空の真因**
+  - 原因A: `buildColMap` で MF が改行入りヘッダー（`"保有\n金融\n機関"`）を返すと `includes('保有金融機関')` がマッチしない
+  - 修正A: `const hn = h.replace(/[\s\u3000\n\r]/g, '')` で正規化、`hn.includes(...)` でチェック
+  - 原因B: count=5 行（CASH/POINT）で `cellTexts[2]`（保有金融機関）を完全に無視していた
+  - 修正B: `cashInstitution = colMap.institution >= 0 ? cellTexts[colMap.institution] : cellTexts[2]` を追加
+  - 優先順位: `cashInstitution || currentInstitution || null`
+- CASH テーブル構造: `[0]=種類・名称, [1]=残高, [2]=保有金融機関, [3]=取得日時, [4]=更新` (count=5)
 
 ## スクレイパー修正記録（2026-03-21 第2セッション）
 
@@ -226,4 +228,29 @@ expect(item.costPerUnitJpy).toBeGreaterThan(0);
 - AssetHistoryChart.tsx: 「総資産」「カテゴリ別」切替ボタン追加、6ラインのカテゴリ別表示
 - AllocationChart.tsx: tooltip のテキストカラーを #ffffff に変更
 - simulator/page.tsx: useCallback + debounce(500ms) でリアルタイム更新実装
+
+## スクレイパー追加修正（2026-03-21）
+
+### CASH 保有金融機関の根本原因2件
+1. buildColMap のヘッダー正規化漏れ
+   - MF DOM で「保有\n金融\n機関」と改行が入るとincludes がマッチしない
+   - 修正: ヘッダー文字列を正規化（改行・空白除去）してから比較
+2. CASH 行（count=5）で colMap.institution = -1 のままフォールバックなし
+   - 修正: cellTexts[2] からフォールバック読み込みを追加
+
+### クレカ引き落とし口座ドロップダウン
+- MF には引き落とし口座情報が載っていないため Web UI で手動設定
+- getCcAccountMapping に institutionName を追加
+- credit/page.tsx ドロップダウンを「金融機関名 - 口座名（残高）」形式に変更
+- institution_name は次回スクレイプ実行後に反映される
+
+### E2E テスト（Playwright）
+- tests/e2e/features.spec.ts を新規追加（27件 pass）
+  - React Query キャッシュ、simulator debounce、chart 切替、tooltip 色
+- functional.spec.ts のセレクタ修正（aria-live='polite'）
+- tooltip の SVG hover テストは test.fixme（不安定のため）
+
+### QueryClient SSR パターン（必須）
+- Next.js App Router + React Query では useState(() => new QueryClient()) が必須
+- モジュールレベルのシングルトン new QueryClient() は SSR でクラッシュする
 
