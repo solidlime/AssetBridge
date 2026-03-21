@@ -6,6 +6,12 @@ import {
   getCcBalanceStatus,
   getUpcomingWithdrawals,
   setCcAccountMapping,
+  getFixedExpenses,
+  addFixedExpense,
+  updateFixedExpense,
+  deleteFixedExpense,
+  getMonthlyWithdrawalSummary,
+  getCreditCardDetails,
 } from "../services/income_expense";
 
 export const incomeExpenseRouter = router({
@@ -24,4 +30,51 @@ export const incomeExpenseRouter = router({
     .mutation(({ input }) => setCcAccountMapping(input)),
 
   getCcBalanceStatus: proc.query(() => getCcBalanceStatus()),
+
+  // ── 固定費 CRUD ───────────────────────────────────────────────────────────
+  getFixedExpenses: proc.query(() => getFixedExpenses()),
+
+  addFixedExpense: proc
+    .input(
+      z.object({
+        name: z.string(),
+        amountJpy: z.number(),
+        frequency: z.enum(["monthly", "annual", "quarterly"]),
+        withdrawalDay: z.number().int().min(1).max(31).nullable().optional(),
+        withdrawalMonth: z.number().int().min(1).max(12).nullable().optional(),
+        category: z.string().nullable().optional(),
+        assetId: z.number().int().nullable().optional(),
+      })
+    )
+    .mutation(({ input }) => addFixedExpense(input)),
+
+  updateFixedExpense: proc
+    .input(
+      z.object({
+        id: z.number().int(),
+        name: z.string().optional(),
+        amountJpy: z.number().optional(),
+        frequency: z.enum(["monthly", "annual", "quarterly"]).optional(),
+        withdrawalDay: z.number().int().min(1).max(31).nullable().optional(),
+        withdrawalMonth: z.number().int().min(1).max(12).nullable().optional(),
+        category: z.string().nullable().optional(),
+        assetId: z.number().int().nullable().optional(),
+      })
+    )
+    .mutation(({ input }) => {
+      const { id, ...data } = input;
+      return updateFixedExpense(id, data);
+    }),
+
+  deleteFixedExpense: proc
+    .input(z.object({ id: z.number().int() }))
+    .mutation(({ input }) => deleteFixedExpense(input.id)),
+
+  // ── 月次引き落としサマリー ────────────────────────────────────────────────
+  getMonthlyWithdrawalSummary: proc
+    .input(z.object({ month: z.string().optional() }))
+    .query(({ input }) => getMonthlyWithdrawalSummary(input.month)),
+
+  // ── クレジットカード詳細 ──────────────────────────────────────────────────
+  getCreditCardDetails: proc.query(() => getCreditCardDetails()),
 });

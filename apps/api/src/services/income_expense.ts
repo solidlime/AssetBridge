@@ -1,7 +1,9 @@
 import { db, sqlite } from "@assetbridge/db/client";
 import { assets, creditCardWithdrawals, portfolioSnapshots } from "@assetbridge/db/schema";
 import { SettingsRepo } from "@assetbridge/db/repos/settings";
-import { and, desc, eq } from "drizzle-orm";
+import { FixedExpenseRepo } from "@assetbridge/db/repos/fixed_expenses";
+import { CreditCardDetailRepo } from "@assetbridge/db/repos/credit_card_details";
+import { and, desc, eq, like } from "drizzle-orm";
 
 export interface CreditWithdrawal {
   id: number;
@@ -222,4 +224,122 @@ export async function getCcAccountMapping(): Promise<CcAccountMapping> {
 export async function setCcAccountMapping(mapping: Record<string, number>): Promise<void> {
   const settingsRepo = new SettingsRepo(sqlite);
   settingsRepo.set("cc_account_mapping", JSON.stringify(mapping));
+}
+
+// ─── 固定費 CRUD ──────────────────────────────────────────────────────────────
+
+export function getFixedExpenses() {
+  const repo = new FixedExpenseRepo(db);
+  return repo.findAll();
+}
+
+export function addFixedExpense(data: {
+  name: string;
+  amountJpy: number;
+  frequency: "monthly" | "annual" | "quarterly";
+  withdrawalDay?: number | null;
+  withdrawalMonth?: number | null;
+  category?: string | null;
+  assetId?: number | null;
+}) {
+  const repo = new FixedExpenseRepo(db);
+  return repo.create(data);
+}
+
+export function updateFixedExpense(
+  id: number,
+  data: Partial<{
+    name: string;
+    amountJpy: number;
+    frequency: "monthly" | "annual" | "quarterly";
+    withdrawalDay: number | null;
+    withdrawalMonth: number | null;
+    category: string | null;
+    assetId: number | null;
+  }>
+) {
+  const repo = new FixedExpenseRepo(db);
+  return repo.update(id, data);
+}
+
+export function deleteFixedExpense(id: number) {
+  const repo = new FixedExpenseRepo(db);
+  return repo.delete(id);
+}
+
+// ─── 月次引き落としサマリー ───────────────────────────────────────────────────
+
+export interface MonthlyWithdrawalSummary {
+  month: string;
+  fixedExpenseTotal: number;
+  creditCardTotal: number;
+  grandTotal: number;
+  linkedAssetIds: number[];
+}
+
+/**
+ * 指定月（"YYYY-MM" 形式、省略時は当月）の引き落とし合計を返す。
+ *
+ * - fixedExpenseTotal : 固定費の月次換算合計
+ * - creditCardTotal   : クレカ引き落とし（credit_card_withdrawals テーブル）当月分合計
+ * - grandTotal        : 上記合計
+ * - linkedAssetIds    : 固定費に紐づく口座 asset_id 一覧
+ */
+export function getMonthlyWithdrawalSummary(month?: string): MonthlyWithdrawalSummary {
+  const targetMonth = month ?? new Date().toISOString().slice(0, 7);
+  const [, monthStr] = targetMonth.split("-");
+  const targetMonthNum = parseInt(monthStr, 10);
+
+  // ── 固定費合計（月次換算） ─────────────────────────────────────────────────
+  const fixedExpenseRepo = new FixedExpenseRepo(db);
+  const expenses = fixedExpenseRepo.findAll();
+
+  let fixedExpenseTotal = 0;
+  const linkedAssetIds = new Set<number>();
+
+  for (const exp of expenses) {
+    let monthlyAmount = 0;
+
+    if (exp.frequency === "monthly") {
+      monthlyAmount = exp.amountJpy;
+    } else if (exp.frequency === "annual") {
+      // 年次費用は月割り
+      monthlyAmount = exp.amountJpy / 12;
+    } else if (exp.frequency === "quarterly") {
+      // 四半期払い: withdrawalMonth を起点に3ヶ月ごとの当月かチェック
+      const startMonth = exp.withdrawalMonth ?? 1;
+      const diff = ((targetMonthNum - startMonth) % 3 + 3) % 3;
+      monthlyAmount = diff === 0 ? exp.amountJpy : 0;
+    }
+
+    fixedExpenseTotal += monthlyAmount;
+    if (exp.assetId != null) linkedAssetIds.add(exp.assetId);
+  }
+
+  // ── クレカ引き落とし合計（当月の withdrawalDate を持つ全レコード） ──────────
+  const ccRows = db
+    .select({ amountJpy: creditCardWithdrawals.amountJpy })
+    .from(creditCardWithdrawals)
+    .where(like(creditCardWithdrawals.withdrawalDate, `${targetMonth}%`))
+    .all();
+
+  const creditCardTotal = ccRows.reduce((sum, r) => sum + r.amountJpy, 0);
+
+  return {
+    month: targetMonth,
+    fixedExpenseTotal,
+    creditCardTotal,
+    grandTotal: fixedExpenseTotal + creditCardTotal,
+    linkedAssetIds: [...linkedAssetIds],
+  };
+}
+
+// ─── クレジットカード詳細 ─────────────────────────────────────────────────────
+
+/**
+ * スクレイプ済みクレジットカード詳細（カード種別・残高・請求予定額等）を返す。
+ */
+export function getCreditCardDetails() {
+  const repo = new CreditCardDetailRepo(db);
+  return repo.findAll();
 }

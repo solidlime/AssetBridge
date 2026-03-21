@@ -10,6 +10,8 @@ import { db, sqlite } from "@assetbridge/db/client";
 import { AssetsRepo } from "@assetbridge/db/repos/assets";
 import { SnapshotsRepo, DailyTotalsRepo } from "@assetbridge/db/repos/snapshots";
 import { SettingsRepo } from "@assetbridge/db/repos/settings";
+import { CreditCardDetailRepo } from "@assetbridge/db/repos/credit_card_details";
+import { DividendDataRepo } from "@assetbridge/db/repos/dividend_data";
 import { crawlerSessions, scrapeEvents, appSettings, creditCardWithdrawals, jobQueue, assets, portfolioSnapshots } from "@assetbridge/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import type { AssetType } from "@assetbridge/types";
@@ -50,11 +52,28 @@ export interface ScrapedCreditWithdrawal {
   bankAccount?: string;
 }
 
+export interface ScrapedCreditCardDetail {
+  cardName: string;
+  cardType: string | null;
+  cardNumberLast4: string | null;
+  totalDebtJpy: number | null;
+  scheduledAmountJpy: number | null;
+}
+
+export interface ScrapedDividendDataItem {
+  ticker: string;
+  months: string | null;
+  annualJpy: number | null;
+  isUnknown: boolean;
+}
+
 export interface ScrapedData {
   totalJpy: number;
   categories: Partial<Record<AssetType, number>>;
   holdings: ScrapedHolding[];
   creditCardWithdrawals?: ScrapedCreditWithdrawal[];
+  creditCardDetails?: ScrapedCreditCardDetail[];
+  dividendData?: ScrapedDividendDataItem[];
 }
 
 function inferDividendFrequency(assetType: AssetType): string | null {
@@ -378,6 +397,45 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
         .run();
     }
     console.log(`[crawler] Saved ${data.creditCardWithdrawals.length} credit card withdrawal(s)`);
+  }
+
+  // クレカ詳細情報を DB に保存
+  if (data.creditCardDetails && data.creditCardDetails.length > 0) {
+    const creditCardDetailRepo = new CreditCardDetailRepo(db);
+    for (const detail of data.creditCardDetails) {
+      try {
+        creditCardDetailRepo.upsertByCardName({
+          cardName: detail.cardName,
+          cardType: detail.cardType ?? null,
+          cardNumberLast4: detail.cardNumberLast4 ?? null,
+          totalDebtJpy: detail.totalDebtJpy ?? null,
+          scheduledAmountJpy: detail.scheduledAmountJpy ?? null,
+          scrapedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        process.stderr.write(`[mf_sbi_bank] credit_card_details upsert failed for ${detail.cardName}: ${err}\n`);
+      }
+    }
+    console.log(`[crawler] credit_card_details: ${data.creditCardDetails.length} cards saved`);
+  }
+
+  // 配当データを DB に保存
+  if (data.dividendData && data.dividendData.length > 0) {
+    const dividendDataRepo = new DividendDataRepo(db);
+    for (const d of data.dividendData) {
+      try {
+        dividendDataRepo.upsertByTicker({
+          ticker: d.ticker,
+          months: d.months ?? null,
+          annualJpy: d.annualJpy ?? null,
+          isUnknown: d.isUnknown,
+          scrapedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        process.stderr.write(`[mf_sbi_bank] dividend_data upsert failed for ${d.ticker}: ${err}\n`);
+      }
+    }
+    console.log(`[crawler] dividend_data: ${data.dividendData.length} tickers saved`);
   }
 
   console.log(

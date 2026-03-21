@@ -29,6 +29,21 @@ type UpcomingWithdrawalsResult = {
   count: number;
 };
 
+type FixedExpenseItem = {
+  id: number;
+  name: string;
+  amountJpy: number;
+  frequency: "monthly" | "annual" | "quarterly";
+};
+
+type MonthlyWithdrawalSummary = {
+  month: string;
+  fixedExpenseTotal: number;
+  creditCardTotal: number;
+  grandTotal: number;
+  linkedAssetIds: number[];
+};
+
 function formatDate(dateStr: string): string {
   if (!dateStr || dateStr.length < 8) return dateStr;
   const y = dateStr.slice(0, 4);
@@ -46,9 +61,12 @@ function daysUntil(dateStr: string): number {
 }
 
 async function getData() {
-  const [snapshot, withdrawals] = await Promise.allSettled([
+  const summaryMonth = new Date().toISOString().slice(0, 7);
+  const [snapshot, withdrawals, monthlySummary, fixedExpenses] = await Promise.allSettled([
     trpc.portfolio.snapshot.query({}),
     trpc.incomeExpense.upcomingWithdrawals.query({ days: 60 }),
+    trpc.incomeExpense.getMonthlyWithdrawalSummary.query({ month: summaryMonth }),
+    trpc.incomeExpense.getFixedExpenses.query(),
   ]);
 
   return {
@@ -57,16 +75,21 @@ async function getData() {
       withdrawals.status === "fulfilled"
         ? withdrawals.value
         : { withdrawals: [], totalAmountJpy: 0, count: 0 },
+    monthlySummary: monthlySummary.status === "fulfilled" ? monthlySummary.value : null,
+    fixedExpenses: fixedExpenses.status === "fulfilled" ? fixedExpenses.value : [],
+    summaryMonth,
   };
 }
 
 export default async function DashboardPage() {
-  const { snapshot, withdrawals } = await getData();
+  const { snapshot, withdrawals, monthlySummary, fixedExpenses, summaryMonth } = await getData();
   const diffJpy = snapshot?.prevDiffJpy ?? 0;
   const diffPct = snapshot?.prevDiffPct ?? 0;
   const sign = diffJpy >= 0 ? "+" : "";
   
   const upcomingResult = withdrawals as unknown as UpcomingWithdrawalsResult;
+  const monthlySummaryData = monthlySummary as MonthlyWithdrawalSummary | null;
+  const fixedExpenseItems = fixedExpenses as FixedExpenseItem[];
 
   const allocations = snapshot?.allocationPct
     ? Object.entries(snapshot.allocationPct)
@@ -132,32 +155,49 @@ export default async function DashboardPage() {
         )}
       </div>
 
-      {/* クレジットカード引き落とし予定 */}
+      {/* 引き落とし管理 */}
       <div style={{ marginBottom: 32 }}>
         <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16, color: "#e2e8f0" }}>
-          クレジットカード引き落とし予定（直近・今後）
+          🏦 引き落とし管理
         </h2>
+
+        {/* 月次支出サマリーカード（横並び3枚） */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: 16,
+            marginBottom: 20,
+          }}
+        >
+          <div style={{ background: "#1e293b", borderRadius: 12, padding: 18 }}>
+            <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>💳 クレカ小計</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: "#f87171", fontFamily: "monospace" }}>
+              {formatJpy(monthlySummaryData?.creditCardTotal ?? upcomingResult.totalAmountJpy)}
+            </div>
+          </div>
+          <div style={{ background: "#1e293b", borderRadius: 12, padding: 18 }}>
+            <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>🏠 固定費小計（月次換算）</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: "#fbbf24", fontFamily: "monospace" }}>
+              {formatJpy(monthlySummaryData?.fixedExpenseTotal ?? 0)}
+            </div>
+          </div>
+          <div style={{ background: "#1e293b", borderRadius: 12, padding: 18, borderLeft: "3px solid #3b82f6" }}>
+            <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 6 }}>📊 総支出予定</div>
+            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "monospace" }}>
+              {formatJpy(monthlySummaryData?.grandTotal ?? upcomingResult.totalAmountJpy)}
+            </div>
+            <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>{summaryMonth}</div>
+          </div>
+        </div>
         
         {upcomingResult && upcomingResult.withdrawals.length > 0 ? (
           <>
-            {/* 引き落とし合計カード */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-              <div style={{ background: "#1e293b", borderRadius: 12, padding: 20 }}>
-                <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>引き落とし予定の合計</div>
-                <div style={{ fontSize: 28, fontWeight: 700, color: "#f87171" }}>
-                  {formatJpy(upcomingResult.totalAmountJpy)}
-                </div>
-              </div>
-              <div style={{ background: "#1e293b", borderRadius: 12, padding: 20 }}>
-                <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 8 }}>引き落とし件数</div>
-                <div style={{ fontSize: 28, fontWeight: 700 }}>
-                  {upcomingResult.count} 件
-                </div>
-              </div>
-            </div>
-
             {/* 引き落とし一覧テーブル */}
-            <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, overflowX: "auto" }}>
+            <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, overflowX: "auto", marginBottom: 16 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, color: "#94a3b8", marginBottom: 12, marginTop: 0 }}>
+                クレジットカード引き落とし予定（直近・今後）
+              </h3>
               <table
                 style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}
                 aria-label="クレジットカード引き落とし予定テーブル"
@@ -209,13 +249,44 @@ export default async function DashboardPage() {
             </div>
           </>
         ) : (
-          <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
-            <p style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: "16px 0" }}>
+          <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 16 }}>
+            <p style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: "16px 0", margin: 0 }}>
               引き落とし予定データがありません。スクレイプを実行してデータを取得してください。
             </p>
-            <p style={{ color: "#475569", fontSize: 12, textAlign: "center" }}>
-              引き落とし情報は次回スクレイプ時に更新されます。
-            </p>
+          </div>
+        )}
+
+        {/* 固定費簡略表示 */}
+        {fixedExpenseItems.length > 0 && (
+          <div style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: "#94a3b8", marginBottom: 12, marginTop: 0 }}>
+              🏠 固定費一覧
+            </h3>
+            <table
+              style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}
+              aria-label="固定費一覧テーブル"
+            >
+              <thead>
+                <tr style={{ color: "#94a3b8", borderBottom: "1px solid #334155" }}>
+                  <th style={{ textAlign: "left", padding: "8px 0" }}>名称</th>
+                  <th style={{ textAlign: "center", padding: "8px 0" }}>頻度</th>
+                  <th style={{ textAlign: "right", padding: "8px 0" }}>金額</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fixedExpenseItems.map((fe) => (
+                  <tr key={fe.id} style={{ borderBottom: "1px solid #0f172a" }}>
+                    <td style={{ padding: "8px 0", fontWeight: 500 }}>{fe.name}</td>
+                    <td style={{ textAlign: "center", padding: "8px 0", color: "#94a3b8", fontSize: 12 }}>
+                      {fe.frequency === "monthly" ? "毎月" : fe.frequency === "annual" ? "年1回" : "四半期"}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "8px 0", fontFamily: "monospace", color: "#fbbf24" }}>
+                      {formatJpy(fe.amountJpy)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

@@ -9,7 +9,10 @@
     "./repos/settings": "./src/repos/settings.ts",
     "./repos/assets": "./src/repos/assets.ts",
     "./repos/snapshots": "./src/repos/snapshots.ts",
-    "./repos/job-queue": "./src/repos/job-queue.ts"
+    "./repos/job-queue": "./src/repos/job-queue.ts",
+    "./repos/fixed_expenses": "./src/repos/fixed_expenses.ts",
+    "./repos/credit_card_details": "./src/repos/credit_card_details.ts",
+    "./repos/dividend_data": "./src/repos/dividend_data.ts"
   },
   "scripts": {
     "test": "bun test",

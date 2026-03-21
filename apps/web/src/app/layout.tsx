@@ -11,7 +11,7 @@ const navItems = [
   { href: "/", label: "ダッシュボード", icon: "📊" },
   { href: "/assets", label: "資産", icon: "💼" },
   { href: "/income-expense", label: "収支", icon: "💰" },
-  { href: "/credit", label: "クレカ", icon: "💳" },
+  { href: "/withdrawals", label: "引き落とし", icon: "🏦" },
   { href: "/dividends", label: "配当", icon: "💴" },
   { href: "/simulator", label: "シミュレーター", icon: "🎯" },
   { href: "/settings", label: "設定", icon: "⚙️" },

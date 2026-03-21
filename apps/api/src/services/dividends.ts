@@ -1,5 +1,6 @@
 import type { DividendCalendar, DividendHolding, HoldingItem } from "@assetbridge/types";
 import { getCached, setCached } from "../lib/cache";
+import { getAllDividendData } from "../lib/dividendCache";
 import { getHoldings } from "./portfolio";
 import { getMarketContext } from "./market";
 
@@ -331,9 +332,16 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
 
   const holdings = await getHoldings({ assetType: "all" });
   // 株式・投信を配当対象に（現金・年金・ポイントはスキップ）
-  const investmentHoldings = holdings.filter(
+  const allInvestmentHoldings = holdings.filter(
     (h) => h.assetType === "STOCK_JP" || h.assetType === "STOCK_US" || h.assetType === "FUND"
   );
+
+  // dividend_data.is_unknown=1 の銘柄は配当未確認のため除外
+  const dividendDataMap = await getAllDividendData();
+  const investmentHoldings = allInvestmentHoldings.filter((h) => {
+    const d = dividendDataMap.get(h.symbol);
+    return !d?.isUnknown;
+  });
 
   const dividendData = await Promise.all(
     investmentHoldings.map(async (h) => {

@@ -41,13 +41,18 @@ const BASE_URL = "https://ssnb.x.moneyforward.com";
 
 const CATEGORY_MAP = {
   "預金・現金・暗号資産": "CASH",
+  "現金・預金": "CASH",
   "株式（現物）": "STOCK_JP",
+  "株式（日本株）": "STOCK_JP",
+  "株式": "STOCK_JP",
   "外国株式": "STOCK_US",
   "投資信託": "FUND",
   "年金": "PENSION",
-  "確定拠出年金": "PENSION", // DC年金・企業型DCに対応
-  "iDeCo": "PENSION",       // 個人型確定拠出年金
+  "確定拠出年金": "PENSION",
+  "iDeCo": "PENSION",
   "ポイント・マイル": "POINT",
+  "ポイント": "POINT",
+  "マイル": "POINT",
 };
 
 function buildColMap(headers) {
@@ -89,8 +94,9 @@ function isHeaderRow(cellTexts) {
 }
 
 function isSummaryRow(cellTexts) {
+  // 構造的アプローチ（tbody tr セレクタ＋クラスベース）を一次フィルタとして採用し、
+  // この関数はテキストベースのフォールバックとして最小化する。
   const summaryKeywords = ['合計', '小計', '合計利益', '評価額合計', '合計金額'];
-  // includes() で「ポイント・マイル（合計）」「年金（合計）」等の複合形式も捕捉
   return cellTexts.some(cell =>
     summaryKeywords.some(kw => cell.trim().includes(kw))
   );
@@ -591,6 +597,128 @@ export async function scrapeCreditCardWithdrawals(page) {
   });
 }
 
+/**
+ * クレカ詳細ページから種別・番号下4桁・負債総額・引き落とし予定額を取得する
+ * @param {import('playwright').Page} page
+ * @returns {Promise<{cardName:string, cardType:string|null, cardNumberLast4:string|null, totalDebtJpy:number|null, scheduledAmountJpy:number|null}[]>}
+ */
+export async function scrapeCreditCardDetails(page) {
+  const results = [];
+  try {
+    await page.goto(`${BASE_URL}/bs/home`, { waitUntil: 'networkidle', timeout: 20000 });
+    await new Promise(r => setTimeout(r, 2000));
+
+    const cardLinks = await page.$$eval('.facilities.accounts-list > li a', anchors =>
+      anchors
+        .filter(a => a.href.includes('/accounts/show_by_service_category_and_account') ||
+                     a.href.includes('/accounts/'))
+        .map(a => {
+          const li = a.closest('li');
+          const titleEl = li?.querySelector('.account_title, .service-name, [class*="title"]');
+          return {
+            href: a.href,
+            cardName: (titleEl?.innerText ?? li?.innerText ?? '').trim().split('\n')[0].trim().slice(0, 100),
+          };
+        })
+        .filter(item => item.cardName.length > 0)
+    );
+
+    process.stderr.write(`[scrapeCreditCardDetails] found ${cardLinks.length} card link(s)\n`);
+
+    for (const { href, cardName } of cardLinks) {
+      try {
+        await page.goto(href, { waitUntil: 'networkidle', timeout: 20000 });
+        await new Promise(r => setTimeout(r, 1000));
+
+        const detail = await page.evaluate(() => {
+          const cardTypeEl = document.querySelector('.card_type, .payment_method, [class*="card-type"], [class*="cardtype"]');
+          const cardType = cardTypeEl?.innerText?.trim() ?? null;
+
+          const cardNumberEl = document.querySelector('.card_number, [class*="card-number"], [class*="cardnumber"], .number');
+          const cardNumberText = cardNumberEl?.innerText?.trim() ?? '';
+          const cardNumberLast4 = cardNumberText.match(/\d{4}$/)?.[0] ?? null;
+
+          const totalDebtEl = document.querySelector('.total_debt, .outstanding_balance, [class*="total-debt"], [class*="totaldebt"]');
+          const totalDebtText = totalDebtEl?.innerText?.replace(/[^\d]/g, '') ?? '';
+          const totalDebtJpy = totalDebtText ? parseInt(totalDebtText, 10) : null;
+
+          const scheduledEl = document.querySelector('.scheduled_amount, .next_payment, [class*="scheduled"], [class*="next-payment"]');
+          const scheduledText = scheduledEl?.innerText?.replace(/[^\d]/g, '') ?? '';
+          const scheduledAmountJpy = scheduledText ? parseInt(scheduledText, 10) : null;
+
+          return { cardType, cardNumberLast4, totalDebtJpy, scheduledAmountJpy };
+        });
+
+        results.push({ cardName, ...detail });
+        process.stderr.write(`[scrapeCreditCardDetails] card="${cardName}": ${JSON.stringify(detail)}\n`);
+      } catch (err) {
+        process.stderr.write(`[scrapeCreditCardDetails] warn: failed for "${cardName}": ${err.message}\n`);
+        results.push({ cardName, cardType: null, cardNumberLast4: null, totalDebtJpy: null, scheduledAmountJpy: null });
+      }
+    }
+  } catch (err) {
+    process.stderr.write(`[scrapeCreditCardDetails] error: ${err.message}\n`);
+  }
+  return results;
+}
+
+/**
+ * minkabu.jp から日本株の配当月・年間配当額を取得する
+ * @param {import('playwright').Page} page
+ * @param {string} ticker 銘柄コード (4〜5桁数字)
+ * @returns {Promise<{ticker:string, months:string|null, annualJpy:number|null, isUnknown:boolean}>}
+ */
+export async function scrapeMinkabuDividend(page, ticker) {
+  try {
+    await page.goto(`https://minkabu.jp/stock/${ticker}/dividend`, {
+      waitUntil: 'networkidle',
+      timeout: 15000,
+    });
+
+    const dividendMonths = await page.evaluate(() => {
+      const months = [];
+      const monthEls = document.querySelectorAll('.dividend-month, [data-dividend-month], .dividend_month');
+      monthEls.forEach(el => {
+        const match = el.textContent.trim().match(/(\d{1,2})月/);
+        if (match) months.push(parseInt(match[1], 10));
+      });
+
+      if (months.length === 0) {
+        for (const table of document.querySelectorAll('table')) {
+          const headers = Array.from(table.querySelectorAll('th')).map(th => th.textContent.trim());
+          if (headers.some(h => h.includes('配当'))) {
+            table.querySelectorAll('td').forEach(td => {
+              const match = td.textContent.match(/(\d{1,2})月/);
+              if (match) months.push(parseInt(match[1], 10));
+            });
+            break;
+          }
+        }
+      }
+      return [...new Set(months)].sort((a, b) => a - b);
+    });
+
+    const annualDividend = await page.evaluate(() => {
+      for (const label of document.querySelectorAll('dt, th, .label, [class*="label"]')) {
+        const text = label.textContent ?? '';
+        if (text.includes('年間配当') || text.includes('予想配当')) {
+          const value = (label.nextElementSibling?.textContent ?? '').replace(/[^\d.]/g, '');
+          if (value) return parseFloat(value);
+        }
+      }
+      return null;
+    });
+
+    if (dividendMonths.length > 0 || annualDividend !== null) {
+      return { ticker, months: dividendMonths.join(','), annualJpy: annualDividend, isUnknown: false };
+    }
+    return { ticker, months: null, annualJpy: null, isUnknown: true };
+  } catch (err) {
+    process.stderr.write(`[scrapeMinkabuDividend] failed for ${ticker}: ${err.message}\n`);
+    return { ticker, months: null, annualJpy: null, isUnknown: true };
+  }
+}
+
 async function scrapePortfolio(page) {
   await page.goto(`${BASE_URL}/bs/portfolio`, { waitUntil: "networkidle" });
   await saveSnapshot(page, '01_portfolio');
@@ -679,9 +807,14 @@ async function scrapePortfolio(page) {
         }
       }
 
-      for (const row of table.querySelectorAll('tr')) {
+      for (const row of table.querySelectorAll('tbody tr')) {
+        // クラスベースの合計行除外（構造的アプローチ）
+        if (row.classList.contains('total') || row.classList.contains('summary') ||
+            row.classList.contains('subtotal')) continue;
         const cells = row.querySelectorAll('td, th');
         const cellTexts = Array.from(cells).map(c => c.innerText.trim());
+        // テキストベースのフォールバック合計行除外（「（合計）」を含む行）
+        if (cellTexts.some(c => c.includes('（合計）'))) continue;
         // カテゴリ行・金融機関行のリンクテキストを取得
         // th>a を優先し、次に td:first-child>a も確認（MF の一部ページは td にリンクを置く）
         const thAnchor = row.querySelector('th a') || row.querySelector('td:first-child a');
@@ -1006,10 +1139,24 @@ async function main() {
 
     const data = await scrapePortfolio(page);
     const creditCardWithdrawals = await scrapeCreditCardWithdrawals(page);
+    const creditCardDetails = await scrapeCreditCardDetails(page);
+
+    // JP株（4〜5桁コード）の配当データを minkabu から収集
+    const jpStockTickers = [...new Set(
+      data.holdings
+        .filter(h => h.assetType === 'STOCK_JP' && /^\d{4,5}$/.test(h.symbol))
+        .map(h => h.symbol)
+    )];
+    const dividendData = [];
+    for (const ticker of jpStockTickers) {
+      const result = await scrapeMinkabuDividend(page, ticker);
+      dividendData.push(result);
+    }
+
     const cookies = await context.cookies();
 
-    process.stderr.write(`[browser-scraper] Scrape complete: ¥${data.totalJpy.toLocaleString()}, credit withdrawals: ${creditCardWithdrawals.length}\n`);
-    send("DONE:" + JSON.stringify({ data: { ...data, creditCardWithdrawals }, cookies }));
+    process.stderr.write(`[browser-scraper] Scrape complete: ¥${data.totalJpy.toLocaleString()}, credit withdrawals: ${creditCardWithdrawals.length}, card details: ${creditCardDetails.length}, dividend data: ${dividendData.length}\n`);
+    send("DONE:" + JSON.stringify({ data: { ...data, creditCardWithdrawals, creditCardDetails, dividendData }, cookies }));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write("[browser-scraper] ERROR: " + msg + "\n");
