@@ -140,10 +140,16 @@ test.describe("設定UIフロー（現行仕様）", () => {
     await page.locator("#sched-hour").selectOption("10");
     await page.locator("#sched-minute").selectOption("15");
 
+    // 保存ボタンをクリック
     await page.getByRole("button", { name: /すべて(の設定を)?保存/ }).click();
-    await expect(page.locator("[role='status']")).toContainText("すべての設定を保存しました", {
-      timeout: 10000,
-    });
+    
+    // settings/page.tsx の実装：role="status" で aria-live="polite" を持つメッセージ
+    // 保存処理が完了するまで少し待つ
+    await page.waitForTimeout(1500);
+    
+    const statusMessage = page.locator("[role='status'][aria-live='polite']");
+    await expect(statusMessage).toBeVisible({ timeout: 10000 });
+    await expect(statusMessage).toContainText("すべての設定を保存しました");
   });
 
   test.skip("2FAコード入力欄が表示される", async ({ page }) => {
