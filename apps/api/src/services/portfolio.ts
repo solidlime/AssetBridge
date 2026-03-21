@@ -2,6 +2,7 @@ import { db } from "@assetbridge/db/client";
 import { assets, portfolioSnapshots, dailyTotals } from "@assetbridge/db/schema";
 import type { PortfolioSnapshot, HoldingItem, DailyTotal, AssetType, AssetDetail, AssetMarketData, NewsItem } from "@assetbridge/types";
 import { eq, desc, gte, and, lt } from "drizzle-orm";
+import { getCachedPrice, setCachedPrice, hasCachedPrice } from "../lib/priceCache.js";
 
 // ─── 内部型定義 ───────────────────────────────────────────────────────────────
 
@@ -38,12 +39,36 @@ type PrevSnapshot = { priceJpy: number; valueJpy: number };
 /**
  * 指定ティッカー（YF 形式、JP株は ".T" 付き）ごとに
  * regularMarketChangePercent を取得して Map で返す。
+ * キャッシュを活用して外部API呼び出しを削減する。
  * 失敗したティッカーはマップに含まれない。
  */
 export async function fetchYahooQuotes(
   tickers: string[]
 ): Promise<Map<string, number>> {
   if (tickers.length === 0) return new Map();
+
+  // キャッシュから取得可能なティッカーを分離
+  const cachedResults = new Map<string, number>();
+  const tickersToFetch: string[] = [];
+
+  for (const ticker of tickers) {
+    if (hasCachedPrice(ticker)) {
+      const cachedValue = getCachedPrice(ticker);
+      if (cachedValue !== undefined) {
+        cachedResults.set(ticker, cachedValue);
+      }
+    } else {
+      tickersToFetch.push(ticker);
+    }
+  }
+
+  // キャッシュミスのティッカーのみ外部 API へ問い合わせ
+  const map = new Map<string, number>(cachedResults);
+
+  if (tickersToFetch.length === 0) {
+    // すべてキャッシュにあった
+    return map;
+  }
 
   const yf = await import("yahoo-finance2");
   type YfQuoteResult = { regularMarketChangePercent?: number | null };
@@ -55,19 +80,21 @@ export async function fetchYahooQuotes(
   const yfInstance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
   const results = await Promise.allSettled(
-    tickers.map((t) =>
+    tickersToFetch.map((t) =>
       yfInstance
         .quote(t, { fields: ["regularMarketChangePercent"] })
         .then((q) => ({ ticker: t, value: q?.regularMarketChangePercent ?? null }))
     )
   );
 
-  const map = new Map<string, number>();
   results.forEach((r, i) => {
     if (r.status === "fulfilled" && r.value.value !== null) {
-      map.set(r.value.ticker, r.value.value);
+      const ticker = tickersToFetch[i];
+      map.set(ticker, r.value.value);
+      // 取得した値をキャッシュに保存
+      setCachedPrice(ticker, r.value.value);
     } else if (r.status === "rejected") {
-      console.warn(`YF quote failed for ticker ${tickers[i]}: ${r.reason}`);
+      console.warn(`YF quote failed for ticker ${tickersToFetch[i]}: ${r.reason}`);
     }
   });
   return map;

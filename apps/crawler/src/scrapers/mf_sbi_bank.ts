@@ -250,51 +250,6 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
     data.categories["STOCK_JP"] = data.categories["STOCK_JP"] - data.categories["STOCK_US"];
   }
 
-  // PENSION/POINT の合計額をダミーレコードとして追加
-  if (data.categories.PENSION && data.categories.PENSION > 0) {
-    deduplicatedHoldings.push({
-      symbol: "",
-      name: "年金（合計）",
-      assetType: "PENSION" as AssetType,
-      valueJpy: data.categories.PENSION,
-      quantity: 1,
-      priceJpy: data.categories.PENSION,
-      costBasisJpy: data.categories.PENSION,
-      costPerUnitJpy: data.categories.PENSION,
-      unrealizedPnlJpy: 0,
-      institutionName: "確定拠出年金・iDeCo",
-      dividendFrequency: null,
-      dividendAmount: null,
-      dividendRate: null,
-      exDividendDate: null,
-      nextExDividendDate: null,
-      distributionType: null,
-      lastDividendUpdate: null,
-    });
-  }
-
-  if (data.categories.POINT && data.categories.POINT > 0) {
-    deduplicatedHoldings.push({
-      symbol: "",
-      name: "ポイント・マイル（合計）",
-      assetType: "POINT" as AssetType,
-      valueJpy: data.categories.POINT,
-      quantity: data.categories.POINT,
-      priceJpy: 1,
-      costBasisJpy: data.categories.POINT,
-      costPerUnitJpy: 1,
-      unrealizedPnlJpy: 0,
-      institutionName: "ポイント・マイル",
-      dividendFrequency: null,
-      dividendAmount: null,
-      dividendRate: null,
-      exDividendDate: null,
-      nextExDividendDate: null,
-      distributionType: null,
-      lastDividendUpdate: null,
-    });
-  }
-
   // CASH/POINT/FUND/PENSION 系の資産は symbol が空文字列（name がキー）なので
   // upsert による差分更新が機能しない。scrape のたびに全削除してから再 insert する。
   // STOCK_JP/STOCK_US は symbol が一意なので upsert のまま（削除しない）。

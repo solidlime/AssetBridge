@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import SimulatorChart from "@/components/charts/SimulatorChart";
 import { formatJpy } from "@/lib/format";
@@ -75,6 +75,43 @@ export default function SimulatorPage() {
       });
   }, []);
 
+  // run 関数を useCallback でラップ（paramsが変更されたら再生成）
+  const run = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await trpc.simulator.run.mutate(params);
+      setResult(res);
+    } catch (e) {
+      console.warn("シミュレーション実行エラー:", e);
+      alert("シミュレーション実行エラー");
+    } finally {
+      setLoading(false);
+    }
+  }, [params]);
+
+  // useEffect④: params 変更時に 500ms debounce で自動的に run() を実行
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!hydrated) return;
+    
+    // 既存のタイマーをクリア
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    
+    // 500ms 後に run() を実行
+    debounceRef.current = setTimeout(() => {
+      run();
+    }, 500);
+    
+    // クリーンアップ
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, [params, hydrated, run]);
+
   // API レスポンスの yearLabels+ percentiles を SimulatorChart 用の配列に変換
   const chartData = result
     ? (result.yearLabels ?? []).map((year: number, i: number) => ({
@@ -86,19 +123,6 @@ export default function SimulatorPage() {
         p90: result.percentiles?.p90?.[i] ?? 0,
       }))
     : [];
-
-  const run = async () => {
-    setLoading(true);
-    try {
-      const res = await trpc.simulator.run.mutate(params);
-      setResult(res);
-    } catch (e) {
-      console.warn("シミュレーション実行エラー:", e);
-      alert("シミュレーション実行エラー");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const inputStyle = {
     background: "#334155",

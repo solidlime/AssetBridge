@@ -72,7 +72,7 @@ function buildColMap(headers) {
     if (h.includes('評価額') && !h.includes('損益')) colMap.value = i;
     if (h.includes('損益額') || (h.includes('損益') && !h.includes('率') && !h.includes('%'))) colMap.unrealizedPnl = i;
     if (h.includes('損益率') || h.includes('損益(%)')) colMap.unrealizedPnlRate = i;
-    if (h.includes('保有金融機関') || h.includes('口座種類')) colMap.institution = i;
+    if (h.includes('保有金融機関') || h.includes('口座種類') || h.includes('口座名義') || h.includes('金融機関名') || h.includes('機関名')) colMap.institution = i;
   });
 
   return colMap;
@@ -283,7 +283,7 @@ export function parseCardBlock(blockText) {
     }
   }
 
-  // 引き落とし口座: 3段階 regex で抽出
+  // 引き落とし口座: 2段階 regex で抽出（Step3のマスクID取得は削除）
   let bankAccount = undefined;
   const bankStep1 = blockText.match(/引き落とし|ご返済.*?(?:口座|銀行)[\s：:]*([^\n※]+)/i);
   if (bankStep1?.[1]) {
@@ -292,14 +292,8 @@ export function parseCardBlock(blockText) {
     const bankStep2 = blockText.match(/([^\n]*銀行[^\n]*)/i);
     if (bankStep2?.[1]) {
       bankAccount = bankStep2[1].trim() || undefined;
-    } else {
-      // マスクされた口座ID・ログインIDを bankAccount として使用
-      // 例: "080********", "sol******", "user@example.c****"
-      const lastLine = lines[lines.length - 1] ?? '';
-      if (/\*{3,}/.test(lastLine)) {
-        bankAccount = lastLine;
-      }
     }
+    // Step3（マスクID取得）は削除: bankAccount は undefined のまま
   }
 
   // 「金融機関サービスサイトへ」が見つからない場合のフォールバック

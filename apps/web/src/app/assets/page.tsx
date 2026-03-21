@@ -1,7 +1,8 @@
 ﻿"use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { trpc } from "@/lib/trpc";
 import { formatJpy, formatPct, diffColor } from "@/lib/format";
 
@@ -215,11 +216,14 @@ function AssetsPageInner() {
   const initialType = searchParams.get("type") ?? "all";
 
   const [activeType, setActiveType] = useState(initialType);
-  const [holdings, setHoldings] = useState<Holding[]>([]);
-  // APIから取得したオリジナルデータを保持するRef
-  // ソートは常にこのRefのコピーに対して行い、holdingsを破壊しない
-  const originalHoldingsRef = useRef<Holding[]>([]);
-  const [loading, setLoading] = useState(true);
+  
+  // React Query で全件取得（assetType: "all" で固定）
+  const { data: holdingsData, isLoading: loading } = useQuery({
+    queryKey: ["holdings", "all"],
+    queryFn: () => trpc.portfolio.holdings.query({ assetType: "all" }),
+    staleTime: 5 * 60 * 1000, // 5分間キャッシュ
+  });
+
   const [sortKey, setSortKey] = useState<SortKey>("valueJpy");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null);
@@ -232,52 +236,40 @@ function AssetsPageInner() {
     [router]
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    trpc.portfolio.holdings
-      .query({ assetType: activeType as "all" | "stock_jp" | "stock_us" | "fund" | "cash" | "pension" | "point" })
-      .then((data) => {
-        if (!cancelled) {
-          const mapped: Holding[] = Array.isArray(data)
-            ? data.map((item) => ({
-                symbol: item.symbol,
-                name: item.name,
-                quantity: item.quantity,
-                valueJpy: item.valueJpy,
-                priceJpy: item.priceJpy,
-                costBasisJpy: item.costBasisJpy,
-                costPerUnitJpy: item.costPerUnitJpy,
-                currentPriceJpy: item.currentPriceJpy,
-                unrealizedPnlJpy: item.unrealizedPnlJpy,
-                unrealizedPnlPct: item.unrealizedPnlPct,
-                assetType: item.assetType,
-                currency: item.currency ?? "JPY",
-                portfolioWeightPct: item.portfolioWeightPct,
-                valueDiffJpy: (item as { valueDiffJpy?: number | null }).valueDiffJpy ?? null,
-                valueDiffPct: (item as { valueDiffPct?: number | null }).valueDiffPct ?? null,
-                priceDiffPct: (item as { priceDiffPct?: number | null }).priceDiffPct ?? null,
-                institutionName: item.institutionName,
-              }))
-            : [];
-          // オリジナルデータをRefに保存（ソートは常にこのRefのコピーから行う）
-          originalHoldingsRef.current = mapped;
-          setHoldings(mapped);
-          setLoading(false);
-        }
-      })
-      .catch((err: unknown) => {
-        console.warn("資産一覧取得失敗:", err instanceof Error ? err.message : err);
-        if (!cancelled) {
-          originalHoldingsRef.current = [];
-          setHoldings([]);
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeType]);
+  // クライアントサイドフィルタ（API呼び出しなし）
+  const filteredHoldings = useMemo(() => {
+    if (!holdingsData) return [];
+    
+    const mapped: Holding[] = Array.isArray(holdingsData)
+      ? holdingsData.map((item) => ({
+          symbol: item.symbol,
+          name: item.name,
+          quantity: item.quantity,
+          valueJpy: item.valueJpy,
+          priceJpy: item.priceJpy,
+          costBasisJpy: item.costBasisJpy,
+          costPerUnitJpy: item.costPerUnitJpy,
+          currentPriceJpy: item.currentPriceJpy,
+          unrealizedPnlJpy: item.unrealizedPnlJpy,
+          unrealizedPnlPct: item.unrealizedPnlPct,
+          assetType: item.assetType,
+          currency: item.currency ?? "JPY",
+          portfolioWeightPct: item.portfolioWeightPct,
+          valueDiffJpy: (item as { valueDiffJpy?: number | null }).valueDiffJpy ?? null,
+          valueDiffPct: (item as { valueDiffPct?: number | null }).valueDiffPct ?? null,
+          priceDiffPct: (item as { priceDiffPct?: number | null }).priceDiffPct ?? null,
+          institutionName: item.institutionName,
+        }))
+      : [];
+
+    // activeType が "all" の場合は全件返す
+    if (activeType === "all") return mapped;
+    
+    // それ以外の場合は assetType でフィルタ
+    return mapped.filter(
+      (h) => h.assetType.toLowerCase() === activeType.toLowerCase()
+    );
+  }, [holdingsData, activeType]);
 
   const handleSort = useCallback(
     (key: SortKey) => {
@@ -291,31 +283,32 @@ function AssetsPageInner() {
     [sortKey]
   );
 
-  // ソートは常に元データ(originalHoldingsRef)のコピーに対して行う
-  // holdingsをそのままソートすると、連打時に再ソートが重複を生む可能性があるため
-  const sortedHoldings = [...originalHoldingsRef.current].sort((a, b) => {
-    let av: number | string | null;
-    let bv: number | string | null;
+  // ソートは常にフィルタ済みデータのコピーに対して行う
+  const sortedHoldings = useMemo(() => {
+    return [...filteredHoldings].sort((a, b) => {
+      let av: number | string | null;
+      let bv: number | string | null;
 
-    if (sortKey === "name") {
-      av = a.name;
-      bv = b.name;
-    } else {
-      av = a[sortKey];
-      bv = b[sortKey];
-    }
+      if (sortKey === "name") {
+        av = a.name;
+        bv = b.name;
+      } else {
+        av = a[sortKey];
+        bv = b[sortKey];
+      }
 
-    if (av === null && bv === null) return 0;
-    if (av === null) return 1;
-    if (bv === null) return -1;
+      if (av === null && bv === null) return 0;
+      if (av === null) return 1;
+      if (bv === null) return -1;
 
-    if (typeof av === "string" && typeof bv === "string") {
-      return sortDir === "asc" ? av.localeCompare(bv, "ja") : bv.localeCompare(av, "ja");
-    }
-    const na = av as number;
-    const nb = bv as number;
-    return sortDir === "asc" ? na - nb : nb - na;
-  });
+      if (typeof av === "string" && typeof bv === "string") {
+        return sortDir === "asc" ? av.localeCompare(bv, "ja") : bv.localeCompare(av, "ja");
+      }
+      const na = av as number;
+      const nb = bv as number;
+      return sortDir === "asc" ? na - nb : nb - na;
+    });
+  }, [filteredHoldings, sortKey, sortDir]);
 
   type SortHeaderProps = {
     label: string;

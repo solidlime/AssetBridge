@@ -41,7 +41,8 @@ export default function AllocationChart({ allocations, totalJpy }: Props) {
           </Pie>
           <Tooltip
             contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }}
-            labelStyle={{ color: "#94a3b8" }}
+            labelStyle={{ color: "#ffffff" }}
+            itemStyle={{ color: "#ffffff" }}
             formatter={(value: number, name: string) => [
               `¥${Math.round(value).toLocaleString("ja-JP")}`,
               name,

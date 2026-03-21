@@ -9,13 +9,24 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  Legend,
 } from "recharts";
 import { trpc } from "@/lib/trpc";
 import type { DailyTotal } from "@assetbridge/types";
 
 type Period = "1W" | "1M" | "3M" | "1Y" | "ALL";
+type ViewMode = "total" | "breakdown";
 
 const PERIODS: Period[] = ["1W", "1M", "3M", "1Y", "ALL"];
+
+const CATEGORY_LINES = [
+  { key: "stockJpJpy", label: "日本株", color: "#60a5fa" },
+  { key: "stockUsJpy", label: "US株", color: "#34d399" },
+  { key: "fundJpy", label: "投資信託", color: "#a78bfa" },
+  { key: "cashJpy", label: "現金", color: "#fbbf24" },
+  { key: "pensionJpy", label: "年金", color: "#f87171" },
+  { key: "pointJpy", label: "ポイント", color: "#fb923c" },
+] as const;
 
 // ALL は最大 365 日分を取得（DB に保存されている全期間）
 const PERIOD_DAYS: Record<Period, number> = {
@@ -35,7 +46,16 @@ const TICK_INTERVAL_DAYS: Record<Period, number> = {
   "ALL": 30,
 };
 
-type ChartDataPoint = { date: string; totalJpy: number | null };
+type ChartDataPoint = {
+  date: string;
+  totalJpy: number | null;
+  stockJpJpy: number | null;
+  stockUsJpy: number | null;
+  fundJpy: number | null;
+  cashJpy: number | null;
+  pensionJpy: number | null;
+  pointJpy: number | null;
+};
 
 function generateDateRange(startDate: Date, endDate: Date): string[] {
   const dates: string[] = [];
@@ -65,6 +85,7 @@ const tooltipFormatter = (value: number) =>
 
 export default function AssetHistoryChart() {
   const [period, setPeriod] = useState<Period>("1M");
+  const [viewMode, setViewMode] = useState<ViewMode>("total");
   const [data, setData] = useState<DailyTotal[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -94,11 +115,33 @@ export default function AssetHistoryChart() {
 
   // 期間内の全日付を埋めたデータ（データのない日は null）
   const paddedData = useMemo((): ChartDataPoint[] => {
-    const dateMap = new Map(data.map((d) => [d.date, d.totalJpy]));
-    return generateDateRange(startDate, endDate).map((date) => ({
-      date,
-      totalJpy: dateMap.get(date) ?? null,
-    }));
+    const dateMap = new Map(
+      data.map((d) => [
+        d.date,
+        {
+          totalJpy: d.totalJpy,
+          stockJpJpy: d.stockJpJpy,
+          stockUsJpy: d.stockUsJpy,
+          fundJpy: d.fundJpy,
+          cashJpy: d.cashJpy,
+          pensionJpy: d.pensionJpy,
+          pointJpy: d.pointJpy,
+        },
+      ])
+    );
+    return generateDateRange(startDate, endDate).map((date) => {
+      const dayData = dateMap.get(date);
+      return {
+        date,
+        totalJpy: dayData?.totalJpy ?? null,
+        stockJpJpy: dayData?.stockJpJpy ?? null,
+        stockUsJpy: dayData?.stockUsJpy ?? null,
+        fundJpy: dayData?.fundJpy ?? null,
+        cashJpy: dayData?.cashJpy ?? null,
+        pensionJpy: dayData?.pensionJpy ?? null,
+        pointJpy: dayData?.pointJpy ?? null,
+      };
+    });
   }, [data, startDate, endDate]);
 
   // 期間に応じた X 軸の目盛り
@@ -119,21 +162,68 @@ export default function AssetHistoryChart() {
   return (
     <div>
       {/* 期間選択ボタン */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {PERIODS.map((p) => (
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          marginBottom: 16,
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        {/* 期間ボタン */}
+        <div style={{ display: "flex", gap: 8 }}>
+          {PERIODS.map((p) => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              aria-pressed={period === p}
+              style={{
+                ...btnBase,
+                background: period === p ? "#3b82f6" : "#334155",
+                color: period === p ? "white" : "#94a3b8",
+              }}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+
+        {/* 表示モード切替ボタン */}
+        <div
+          style={{
+            display: "flex",
+            gap: 4,
+            background: "#1e293b",
+            borderRadius: 16,
+            padding: 2,
+          }}
+        >
           <button
-            key={p}
-            onClick={() => setPeriod(p)}
-            aria-pressed={period === p}
+            onClick={() => setViewMode("total")}
+            aria-pressed={viewMode === "total"}
             style={{
               ...btnBase,
-              background: period === p ? "#3b82f6" : "#334155",
-              color: period === p ? "white" : "#94a3b8",
+              padding: "4px 16px",
+              background: viewMode === "total" ? "#3b82f6" : "transparent",
+              color: viewMode === "total" ? "white" : "#94a3b8",
             }}
           >
-            {p}
+            総資産
           </button>
-        ))}
+          <button
+            onClick={() => setViewMode("breakdown")}
+            aria-pressed={viewMode === "breakdown"}
+            style={{
+              ...btnBase,
+              padding: "4px 16px",
+              background: viewMode === "breakdown" ? "#3b82f6" : "transparent",
+              color: viewMode === "breakdown" ? "white" : "#94a3b8",
+            }}
+          >
+            カテゴリ別
+          </button>
+        </div>
       </div>
 
       {/* グラフ本体 */}
@@ -188,17 +278,62 @@ export default function AssetHistoryChart() {
               }}
               labelStyle={{ color: "#94a3b8" }}
               itemStyle={{ color: "#60a5fa" }}
-              formatter={tooltipFormatter}
+              formatter={
+                viewMode === "total"
+                  ? tooltipFormatter
+                  : (value: number, name: string) => {
+                      const category = CATEGORY_LINES.find(
+                        (c) => c.key === name
+                      );
+                      return [
+                        `¥${Math.round(value).toLocaleString("ja-JP")}`,
+                        category?.label || name,
+                      ];
+                    }
+              }
             />
-            <Line
-              type="monotone"
-              dataKey="totalJpy"
-              stroke="#60a5fa"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4 }}
-              connectNulls={false}
-            />
+
+            {viewMode === "total" ? (
+              <Line
+                type="monotone"
+                dataKey="totalJpy"
+                stroke="#60a5fa"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+                connectNulls={false}
+              />
+            ) : (
+              <>
+                {CATEGORY_LINES.map((category) => (
+                  <Line
+                    key={category.key}
+                    type="monotone"
+                    dataKey={category.key}
+                    stroke={category.color}
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                    connectNulls={false}
+                    name={category.label}
+                  />
+                ))}
+                <Legend
+                  wrapperStyle={{ paddingTop: "16px" }}
+                  iconType="line"
+                  formatter={(value: string) => {
+                    const category = CATEGORY_LINES.find(
+                      (c) => c.label === value
+                    );
+                    return (
+                      <span style={{ color: "#94a3b8", fontSize: 12 }}>
+                        {value}
+                      </span>
+                    );
+                  }}
+                />
+              </>
+            )}
           </LineChart>
         </ResponsiveContainer>
       )}

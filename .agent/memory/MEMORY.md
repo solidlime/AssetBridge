@@ -205,3 +205,25 @@ expect(item.costPerUnitJpy).toBeGreaterThan(0);
 - 変更前: `withdrawalDate >= today` → 過去日付の古いレコードが残る
 - 変更後: `status='scheduled'` 全件削除 → 常に最新状態に
 
+## 改善記録（2026-03-21 第3セッション）
+
+### 資産一覧パフォーマンス改善
+- 原因: タブ切り替えのたびに tRPC API 呼び出し（キャッシュなし）+ Yahoo Finance 外部API毎回呼び出し
+- 修正: @tanstack/react-query 導入（staleTime:5分）+ assetType:"all" 全件取得 + useMemo クライアントフィルタ
+- API側: apps/api/src/lib/priceCache.ts（TTL:24時間の Map キャッシュ）でYahoo Finance呼び出しをラップ
+- 効果: タブ切り替え瞬時化、初回ロード 300-500ms 以内
+- QueryClientProvider は apps/web/src/components/Providers.tsx に分離（"use client" 制約対応）
+
+### browser-scraper.mjs の修正
+- buildColMap: 「口座名義」「金融機関名」「機関名」をカラム検出に追加
+- parseCardBlock Step3: マスクID（"080*****"）を bankAccount に設定しないよう修正
+
+### mf_sbi_bank.ts の修正
+- 年金（合計）・ポイント・マイル（合計）のダミーレコード追加ロジックを削除
+- カテゴリ合計は daily_totals テーブルから参照するため不要
+
+### UI 改善
+- AssetHistoryChart.tsx: 「総資産」「カテゴリ別」切替ボタン追加、6ラインのカテゴリ別表示
+- AllocationChart.tsx: tooltip のテキストカラーを #ffffff に変更
+- simulator/page.tsx: useCallback + debounce(500ms) でリアルタイム更新実装
+
