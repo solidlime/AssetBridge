@@ -65,6 +65,7 @@ function buildColMap(headers) {
 
   headers.forEach((h, i) => {
     if (!h) return;
+    const hn = h.replace(/[\s\u3000\n\r]/g, ''); // 空白・改行を正規化してマッチング精度を上げる
     if (h.includes('銘柄') || h.includes('名称')) colMap.name = i;
     if (h.includes('保有数') || h.includes('数量')) colMap.quantity = i;
     if (h.includes('取得単価')) colMap.costPerUnit = i;
@@ -72,7 +73,7 @@ function buildColMap(headers) {
     if (h.includes('評価額') && !h.includes('損益')) colMap.value = i;
     if (h.includes('損益額') || (h.includes('損益') && !h.includes('率') && !h.includes('%'))) colMap.unrealizedPnl = i;
     if (h.includes('損益率') || h.includes('損益(%)')) colMap.unrealizedPnlRate = i;
-    if (h.includes('保有金融機関') || h.includes('口座種類') || h.includes('口座名義') || h.includes('金融機関名') || h.includes('機関名')) colMap.institution = i;
+    if (hn.includes('保有金融機関') || hn.includes('口座種類') || hn.includes('口座名義') || hn.includes('金融機関名') || hn.includes('機関名')) colMap.institution = i;
   });
 
   return colMap;
@@ -901,12 +902,16 @@ async function scrapePortfolio(page) {
         process.stderr.write(`[DEBUG] cash row: count=${count}, name="${name}", balance="${cellTexts[1]}"\n`);
       }
       if (name && balance > 0 && !/[\u2039\u203A]/.test(name) && !/^\d+$/.test(name)) {
+        // 保有金融機関: colMap で取得できない場合は CASH テーブルの固定位置（index 2）から直接読む
+        const cashInstitution = (colMap.institution >= 0 && cellTexts[colMap.institution]?.trim())
+          ? cellTexts[colMap.institution].trim()
+          : (cellTexts.length > 2 ? (cellTexts[2]?.trim() || null) : null);
         const fullName = lastCashInstitution ? `${lastCashInstitution}[${name}]` : name;
         holdings.push({
           symbol: "", name: fullName, assetType: currentCategory,
           valueJpy: balance, unrealizedPnlJpy: 0,
           quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
-          institutionName: currentInstitution || null,
+          institutionName: cashInstitution || currentInstitution || null,
           dividendFrequency: null,
           dividendAmount: null,
           dividendRate: null,
