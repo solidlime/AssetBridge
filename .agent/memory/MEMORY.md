@@ -254,3 +254,16 @@ expect(item.costPerUnitJpy).toBeGreaterThan(0);
 - Next.js App Router + React Query では useState(() => new QueryClient()) が必須
 - モジュールレベルのシングルトン new QueryClient() は SSR でクラッシュする
 
+## CASH institution_name 継承パターン（2026-03-21）
+
+### 問題
+スクレイプ後も CASH の institution_name が NULL になるケースがある。
+POINT レコードには正しく institution_name が入っている場合がある。
+
+### 修正
+1. DB: POINT から同名 CASH レコードへ institution_name をコピー（15件中13件解決）
+2. スクレイパー恒久修正: CASH institution_name が空の場合、同名 POINT から自動継承
+
+### 残課題
+2件は POINT 側にもデータなし → 次回スクレイプ後に手動確認
+
