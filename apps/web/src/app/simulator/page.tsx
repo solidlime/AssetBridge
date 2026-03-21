@@ -4,6 +4,16 @@ import { trpc } from "@/lib/trpc";
 import SimulatorChart from "@/components/charts/SimulatorChart";
 import { formatJpy } from "@/lib/format";
 
+const SIMULATOR_STORAGE_KEY = "assetbridge_simulator_params_v1";
+
+type SavedParams = {
+  monthly: number;
+  years: number;
+  returnRate: number;
+  volatility: number;
+  simulations: number;
+};
+
 export default function SimulatorPage() {
   const [params, setParams] = useState({
     initial: 1000000,
@@ -15,6 +25,38 @@ export default function SimulatorPage() {
   });
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  // useEffect①: hydration後にlocalStorageから保存済みパラメータを復元
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SIMULATOR_STORAGE_KEY);
+      if (raw) {
+        const savedParams = JSON.parse(raw) as Partial<SavedParams>;
+        setParams((p) => ({ ...p, ...savedParams }));
+      }
+    } catch {
+      // 読み込み失敗時はデフォルト値のまま
+    }
+    setHydrated(true);
+  }, []);
+
+  // useEffect②: パラメータ変更時にlocalStorageへ保存（initial を除く5項目のみ）
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      const toSave: SavedParams = {
+        monthly: params.monthly,
+        years: params.years,
+        returnRate: params.returnRate,
+        volatility: params.volatility,
+        simulations: params.simulations,
+      };
+      localStorage.setItem(SIMULATOR_STORAGE_KEY, JSON.stringify(toSave));
+    } catch {
+      // 書き込み失敗時は無視
+    }
+  }, [params]);
 
   // 総資産を取得して初期資産の初期値に設定
   // portfolio.snapshot は getHoldings() → fetchYahooQuotes() を呼ぶため低速・失敗リスクあり。

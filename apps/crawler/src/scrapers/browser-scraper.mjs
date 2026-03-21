@@ -551,8 +551,9 @@ export async function scrapeCreditCardWithdrawals(page) {
   // cardName をキーに重複排除してマージ
   const seen = new Set();
   return [...anchorResults, ...dlResults].filter(item => {
-    if (seen.has(item.cardName)) return false;
-    seen.add(item.cardName);
+    const key = `${item.cardName}|${item.withdrawalDate ?? ""}|${item.amountJpy ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
@@ -612,6 +613,36 @@ async function scrapePortfolio(page) {
         let pel = table.parentElement.previousElementSibling;
         for (let i = 0; i < 3 && pel && !sectionHeading; i++, pel = pel.previousElementSibling) {
           if (/^H[2-6]$/.test(pel.tagName)) sectionHeading = pel.innerText.trim();
+        }
+      }
+
+      // パターン4: MF固有 - テーブルを囲む li/div[class*="account"] や [class*="group"] の中の名前要素
+      if (!sectionHeading) {
+        const accountContainer = table.closest(
+          'li[class*="account"], li[class*="group"], div[class*="account"], div[class*="group"], ' +
+          '[class*="service"], [class*="institution"]'
+        );
+        if (accountContainer) {
+          const nameEl = accountContainer.querySelector(
+            '[class*="name"], [class*="title"], [class*="service-logo"], ' +
+            'h2, h3, h4, h5, h6, p'
+          );
+          if (nameEl) sectionHeading = nameEl.innerText.trim();
+        }
+      }
+
+      // パターン5: テーブル直前の div/p/span でリンクを含むもの（金融機関リンク行）
+      if (!sectionHeading) {
+        let el = table.previousElementSibling;
+        for (let i = 0; i < 10 && el && !sectionHeading; i++, el = el.previousElementSibling) {
+          if (/^(DIV|P|SPAN|LI)$/.test(el.tagName)) {
+            const a = el.querySelector('a');
+            const text = (a ? a.innerText : el.innerText).trim();
+            if (text && text.length > 1 && !text.startsWith('\u2039') && !text.startsWith('\u203A') &&
+                !text.startsWith('<') && !text.startsWith('>')) {
+              sectionHeading = text;
+            }
+          }
         }
       }
 
@@ -694,13 +725,21 @@ async function scrapePortfolio(page) {
           currentCategory = catFromHeading;
           process.stderr.write(`[browser-scraper] Table[${tableIndex}] heading="${sectionHeading}" → category=${currentCategory}\n`);
         } else {
-          // 部分一致（見出しにカテゴリキーが含まれる場合）
+          let matched = false;
           for (const [key, val] of Object.entries(CATEGORY_MAP)) {
             if (sectionHeading.includes(key)) {
               currentCategory = val;
               process.stderr.write(`[browser-scraper] Table[${tableIndex}] heading contains "${key}" → category=${currentCategory}\n`);
+              matched = true;
               break;
             }
+          }
+          // CATEGORY_MAP にマッチしない見出し = 金融機関名として扱う
+          if (!matched && sectionHeading.length > 0 && 
+              !sectionHeading.startsWith('\u2039') && !sectionHeading.startsWith('\u203A')) {
+            currentInstitution = sectionHeading;
+            lastCashInstitution = sectionHeading;
+            process.stderr.write(`[browser-scraper] Table[${tableIndex}] institution from heading="${sectionHeading}"\n`);
           }
         }
       }
@@ -708,7 +747,24 @@ async function scrapePortfolio(page) {
     // ─────────────────────────────────────────────────────────────────────────
     const count = cellTexts.length;
 
-    if (count >= 2 && count <= 4) {
+    if (count >= 1 && count <= 4) {
+      // count=1 はカテゴリ行ではなく金融機関名行（colspan行）の可能性が高い
+      if (count === 1) {
+        const text = (cellTexts[0] ?? "").trim();
+        if (text && !text.startsWith('\u2039') && !text.startsWith('\u203A') &&
+            !text.startsWith('<') && !text.startsWith('>')) {
+          currentInstitution = text;
+          lastCashInstitution = text;
+          process.stderr.write(`[browser-scraper] institution(colspan) "${text}"\n`);
+        }
+        continue;
+      }
+      // ページネーション行（‹ や › だけのセル）は完全スキップ
+      const firstCellText = (cellTexts[0] ?? "").trim();
+      if (firstCellText.startsWith('\u2039') || firstCellText.startsWith('\u203A') ||
+          firstCellText === '<' || firstCellText === '>') {
+        continue;
+      }
       // DOM順序デバッグ: カテゴリ行を全て出力
       process.stderr.write(`[DEBUG CAT] count=${count}, anchor="${thAnchorText}", text="${cellTexts[0]}", holdings=${holdings.length}\n`);
       if (thAnchorText) {
@@ -780,7 +836,7 @@ async function scrapePortfolio(page) {
           assetType: resolvedType,
           valueJpy, unrealizedPnlJpy,
           quantity, priceJpy, costBasisJpy, costPerUnitJpy,
-          institutionName: currentInstitution ?? null,
+          institutionName: currentInstitution || null,
           dividendFrequency: null,
           dividendAmount: null,
           dividendRate: null,
@@ -802,7 +858,7 @@ async function scrapePortfolio(page) {
           symbol: "", name: fullName, assetType: currentCategory,
           valueJpy: balance, unrealizedPnlJpy: 0,
           quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
-          institutionName: currentInstitution ?? null,
+          institutionName: currentInstitution || null,
           dividendFrequency: null,
           dividendAmount: null,
           dividendRate: null,
@@ -832,7 +888,7 @@ async function scrapePortfolio(page) {
           symbol: "", name: fullName, assetType: currentCategory,
           valueJpy: balance, unrealizedPnlJpy: 0,
           quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
-          institutionName: currentInstitution ?? null,
+          institutionName: currentInstitution || null,
           dividendFrequency: null,
           dividendAmount: null,
           dividendRate: null,

@@ -15,6 +15,7 @@ function resolveDefaultDbPath(): string {
 const dbPath = path.resolve(process.env.ASSETBRIDGE_DB_PATH ?? resolveDefaultDbPath());
 
 export const sqlite = new Database(dbPath);
+sqlite.exec("PRAGMA busy_timeout = 5000;");  // 複数プロセス競合時に最大5秒待機
 sqlite.exec("PRAGMA journal_mode = WAL;");
 sqlite.exec("PRAGMA foreign_keys = ON;");
 

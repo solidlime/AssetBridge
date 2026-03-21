@@ -73,9 +73,10 @@ test.describe("認証付き tRPC API テスト", () => {
     expect("status" in data).toBe(true);
   });
 
-  test("portfolio.snapshot が 200 で totalJpy を返す", async ({ request }) => {
+  test("portfolio.snapshot が 200 で totalJpy を返す", { timeout: 60000 }, async ({ request }) => {
     const res = await request.get(`${API_BASE}/trpc/portfolio.snapshot?input=%7B%7D`, {
       headers: API_HEADERS,
+      timeout: 55000,
     });
     expect(res.status()).toBe(200);
 

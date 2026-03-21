@@ -157,7 +157,7 @@ export async function getCcBalanceStatus(): Promise<CcBalanceStatus> {
       withdrawalDate: r.withdrawalDate,
       amountJpy: r.amountJpy,
       status: r.status,
-      accountName: account?.name ?? null,
+      accountName: account?.name ?? (r.bankAccount ?? null),
       accountAssetId: assetId,
       accountBalanceJpy,
       shortfallJpy,

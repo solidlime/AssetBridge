@@ -85,8 +85,8 @@ info "Ensured directories: logs/ data/"
 # 5. pnpm install
 # ---------------------------------------------------------------------------
 if [ "${SKIP_INSTALL}" = false ]; then
-  info "Running pnpm install --frozen-lockfile ..."
-  if ! pnpm install --frozen-lockfile; then
+  info "Running pnpm install --no-frozen-lockfile ..."
+  if ! pnpm install --no-frozen-lockfile; then
     error "pnpm install failed"
     exit 1
   fi
@@ -125,10 +125,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 8. ecosystem.config.ts → ecosystem.config.cjs 変換
+# 8. ecosystem.config.cjs を直接使用
 # ---------------------------------------------------------------------------
-info "Converting ecosystem.config.ts → ecosystem.config.cjs ..."
-cp ecosystem.config.ts ecosystem.config.cjs
+# ecosystem.config.cjs を直接使用
 
 # ---------------------------------------------------------------------------
 # 9. ゾンビプロセスキル + PM2 起動
