@@ -56,7 +56,21 @@ for (const filename of migrationFiles) {
 
   db.transaction(() => {
     for (const stmt of statements) {
-      db.exec(stmt);
+      try {
+        db.exec(stmt);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // テーブル・インデックス・カラムが既存の場合はスキップして続行
+        if (
+          msg.includes("already exists") ||
+          msg.includes("duplicate column") ||
+          msg.includes("duplicate index")
+        ) {
+          console.log(`    [skip already-exists] ${msg.slice(0, 120)}`);
+          continue;
+        }
+        throw err;
+      }
     }
     db.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, unixepoch())").run(hash);
   })();

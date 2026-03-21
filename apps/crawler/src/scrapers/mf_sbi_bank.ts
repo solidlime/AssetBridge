@@ -10,8 +10,8 @@ import { db, sqlite } from "@assetbridge/db/client";
 import { AssetsRepo } from "@assetbridge/db/repos/assets";
 import { SnapshotsRepo, DailyTotalsRepo } from "@assetbridge/db/repos/snapshots";
 import { SettingsRepo } from "@assetbridge/db/repos/settings";
-import { crawlerSessions, scrapeEvents, appSettings, creditCardWithdrawals, jobQueue } from "@assetbridge/db/schema";
-import { eq, and, gte } from "drizzle-orm";
+import { crawlerSessions, scrapeEvents, appSettings, creditCardWithdrawals, jobQueue, assets, portfolioSnapshots } from "@assetbridge/db/schema";
+import { eq, inArray } from "drizzle-orm";
 import type { AssetType } from "@assetbridge/types";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -295,6 +295,24 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
     });
   }
 
+  // CASH/POINT/FUND/PENSION 系の資産は symbol が空文字列（name がキー）なので
+  // upsert による差分更新が機能しない。scrape のたびに全削除してから再 insert する。
+  // STOCK_JP/STOCK_US は symbol が一意なので upsert のまま（削除しない）。
+  const nonStockTypes: AssetType[] = ["CASH", "POINT", "FUND", "PENSION"];
+  for (const assetTypeVal of nonStockTypes) {
+    const assetsToDelete = db
+      .select({ id: assets.id })
+      .from(assets)
+      .where(eq(assets.assetType, assetTypeVal))
+      .all();
+    if (assetsToDelete.length > 0) {
+      db.delete(portfolioSnapshots)
+        .where(inArray(portfolioSnapshots.assetId, assetsToDelete.map((a) => a.id)))
+        .run();
+    }
+    db.delete(assets).where(eq(assets.assetType, assetTypeVal)).run();
+  }
+
   for (const h of deduplicatedHoldings) {
     const assetId = assetsRepo.upsert({
       symbol: h.symbol || h.name.slice(0, 50),
@@ -362,14 +380,10 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
 
   // クレカ引き落とし情報を DB に保存
   if (data.creditCardWithdrawals && data.creditCardWithdrawals.length > 0) {
-    // 将来の scheduled データをリセット（スクレイプのたびに最新状態に更新）
+    // スクレイプのたびに scheduled を全件削除して最新状態に更新
+    // （過去日付の重複レコードを防ぐため、日付絞り込みなし）
     db.delete(creditCardWithdrawals)
-      .where(
-        and(
-          gte(creditCardWithdrawals.withdrawalDate, today),
-          eq(creditCardWithdrawals.status, "scheduled")
-        )
-      )
+      .where(eq(creditCardWithdrawals.status, "scheduled"))
       .run();
 
     const scrapedAt = new Date().toISOString().replace("T", " ").slice(0, 19);

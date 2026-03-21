@@ -129,7 +129,10 @@ expect(item.costPerUnitJpy).toBeGreaterThan(0);
 - `apps/crawler/src/scrapers/mf_sbi_bank.ts` の upsertSnapshot 引数を要確認
 - assetType 別デフォルト: STOCK_JP=semi-annual / STOCK_US=quarterly / FUND=monthly
 
-### スクレイパー スクショ保存
+### overrides 変更時は lockfile を必ず再生成すること
+- `package.json` の `overrides` を変更したら `pnpm install --no-frozen-lockfile` で lockfile を再生成
+- `start.sh` は `--frozen-lockfile` ではなく `--no-frozen-lockfile` を使うこと（overrides 変更に追従できない）
+- 症状: `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` でスタートアップクラッシュ
 - `SAVE_SNAPSHOTS=1` 環境変数で `data/snapshots/YYYY-MM-DD/*.png` に保存
 - `console.error` を使う（stdout はプロトコル通信に使用済み）
 - クレカ 0 件問題: MF の HTML 変更でセレクタが壊れやすい → スクショで構造を目視確認
@@ -177,8 +180,28 @@ expect(item.costPerUnitJpy).toBeGreaterThan(0);
 - **重要**: フォールバックは使わず、`/bs/portfolio` からの直接取得を維持すること
 - 検証: 次回スクレイプで `[browser-scraper] institution from heading=` または `institution(colspan)` ログが出れば成功
 
-### シミュレータ localStorage 永続化
-- `apps/web/src/app/simulator/page.tsx` で localStorage 実装
-- 保存キー: `assetbridge_simulator_params_v1`
-- SSR 対策: `hydrated` フラグで初回レンダリングをスキップ
-- initial（資産総額）はAPIから常に最新取得（localStorage 非保存）
+## スクレイパー修正記録（2026-03-21 第2セッション）
+
+### クレカ li 入れ子問題
+- 原因: `.facilities.accounts-list li` が内側 li も取得 → 各カードが2件になっていた
+- 修正: `> li`（直接の子のみ）に変更。フォールバックも `!li.parentElement.closest('li')` 追加
+- 教訓: MF の accounts-list は li が入れ子構造。`querySelectorAll('li')` ではなく `> li` を使うこと
+
+### カード名取得（金融機関サービスサイトへ は innerText に出ない）
+- CSS で非表示のテキストは `innerText` に返らない（`textContent` は返る）
+- `skipPatterns` ベースで lines[0] からカード名を取得するロジックに修正
+
+### assets の古いゴミデータ残留問題
+- CASH/POINT/FUND/PENSION は symbol="" で upsert キーが name になる
+- 修正: `mf_sbi_bank.ts` でスクレイプ前に CASH/POINT/FUND/PENSION の assets+snapshots を全削除
+- portfolioSnapshots は外部キー → assets の順序で削除すること（ON DELETE CASCADE なし）
+- STOCK_JP/STOCK_US は symbol がユニークなので upsert のまま
+
+### isSummaryRow フィルタ
+- `startsWith/===` では「ポイント・マイル（合計）」が漏れる → `includes(kw)` に変更
+- 「年金（合計）」「ポイント・マイル（合計）」は mf_sbi_bank.ts で意図的に追加するダミーレコード（仕様）
+
+### credit_card_withdrawals の DELETE 条件修正
+- 変更前: `withdrawalDate >= today` → 過去日付の古いレコードが残る
+- 変更後: `status='scheduled'` 全件削除 → 常に最新状態に
+

@@ -59,6 +59,7 @@ function buildColMap(headers) {
     value: -1,
     unrealizedPnl: -1,
     unrealizedPnlRate: -1,
+    institution: -1,
   };
   if (!headers || headers.length === 0) return colMap;
 
@@ -71,9 +72,27 @@ function buildColMap(headers) {
     if (h.includes('評価額') && !h.includes('損益')) colMap.value = i;
     if (h.includes('損益額') || (h.includes('損益') && !h.includes('率') && !h.includes('%'))) colMap.unrealizedPnl = i;
     if (h.includes('損益率') || h.includes('損益(%)')) colMap.unrealizedPnlRate = i;
+    if (h.includes('保有金融機関') || h.includes('口座種類')) colMap.institution = i;
   });
 
   return colMap;
+}
+
+function isHeaderRow(cellTexts) {
+  const headerKeywords = [
+    '銘柄コード', '銘柄名', '保有数', '数量',
+    '取得単価', '現在値', '現在価格',
+    '評価額', '損益額', '損益率', '保有金融機関',
+  ];
+  return cellTexts.some(cell => headerKeywords.some(kw => cell.includes(kw)));
+}
+
+function isSummaryRow(cellTexts) {
+  const summaryKeywords = ['合計', '小計', '合計利益', '評価額合計', '合計金額'];
+  // includes() で「ポイント・マイル（合計）」「年金（合計）」等の複合形式も捕捉
+  return cellTexts.some(cell =>
+    summaryKeywords.some(kw => cell.trim().includes(kw))
+  );
 }
 
 function detectAssetType(symbol) {
@@ -180,6 +199,16 @@ export function parseCardBlock(blockText) {
 
   // カード名: 「金融機関サービスサイトへ」を含む行から抽出
   let cardName = '不明';
+  // テキストベースでカード名を取得（「金融機関サービスサイトへ」は CSS 非表示で innerText に出ないため）
+  // 最初の「意味のある行」= カード名
+  const skipPatterns = ['取得日時', 'ステータス', '編集', '更新', '引き落とし', '利用残高', 'ポイント', '未払金'];
+  const firstMeaningful = lines.find(l =>
+    l.length > 1 &&
+    !skipPatterns.some(p => l.includes(p)) &&
+    !l.match(/^-?[\d,]+円?$/) &&   // 金額行を除外
+    !l.match(/^\*+$/)              // マスク文字列を除外
+  );
+  if (firstMeaningful) cardName = firstMeaningful;
   const cardLine = lines.find(l => l.includes('金融機関サービスサイトへ'));
   if (cardLine) {
     const sameLine = cardLine.replace('金融機関サービスサイトへ', '').trim();
@@ -192,7 +221,10 @@ export function parseCardBlock(blockText) {
       cardName = anchorIdx > 0 ? lines[anchorIdx - 1] : (lines[0] || '不明');
     }
   }
-  if (!cardName || cardName === '') return null;
+  if (!cardName || cardName === '') {
+    // 後続フォールバックで補完するため、ここでは '不明' にとどめる
+    cardName = '不明';
+  }
 
   // 引き落とし日: 「引き落とし日:(YYYY/MM/DD)」から抽出
   let withdrawalDate = null;
@@ -270,6 +302,27 @@ export function parseCardBlock(blockText) {
     }
   }
 
+  // 「金融機関サービスサイトへ」が見つからない場合のフォールバック
+  if (cardName === '不明') {
+    const cardKeywords = ['カード', 'Card', 'VISA', 'Mastercard', 'JCB', 'AMEX', '楽天', '三井住友', 'PayPay', 'Paidy', 'エポス', 'イオン', 'SBI'];
+    const cardLine2 = lines.find(l => cardKeywords.some(kw => l.includes(kw)) && !l.includes('引き落とし') && !l.includes('残高'));
+    if (cardLine2) {
+      cardName = cardLine2.trim();
+    } else if (lines.length > 0) {
+      const firstMeaningfulLine = lines.find(l =>
+        !l.includes('引き落とし') &&
+        !l.match(/^\d{4}\/\d{2}\/\d{2}$/) &&
+        !l.match(/^[\d,]+円?$/) &&
+        l.length > 1
+      );
+      if (firstMeaningfulLine) cardName = firstMeaningfulLine;
+    }
+  }
+  // それでも取れない場合、引き落とし日がある行があれば null は返さない（カード名不明として記録）
+  if (!cardName || cardName === '不明') {
+    if (!withdrawalDate) return null; // 日付も名前もなければスキップ
+    cardName = '不明のカード';
+  }
   return { cardName: cardName.slice(0, 100), withdrawalDate, amountJpy, status: 'scheduled', bankAccount };
 }
 
@@ -284,7 +337,7 @@ export async function scrapeCardsByAnchor(page) {
   const results = [];
   // BASE_URL と /bs/portfolio の左カラムを順番に試みる
   // /bs/portfolio はすべてのクレカが左カラムに表示される
-  const urlsToTry = [BASE_URL, `${BASE_URL}/bs/portfolio`];
+  const urlsToTry = [BASE_URL];
 
   for (const url of urlsToTry) {
     if (results.length >= 3) break; // 3枚取得済みなら終了
@@ -294,39 +347,24 @@ export async function scrapeCardsByAnchor(page) {
       process.stderr.write(`[browser-scraper] scrapeCardsByAnchor: URL=${page.url()}\n`);
 
       const cardBlocks = await page.evaluate(() => {
-        // 「金融機関サービスサイトへ」リンクを全て取得 → 各カードの起点
-        const anchors = Array.from(document.querySelectorAll('a'));
-        const cardAnchors = anchors.filter(a => a.textContent.includes('金融機関サービスサイトへ'));
-        return cardAnchors.map(a => {
-          // section は複数カードを内包する可能性が高いため使わない。
-          // Step 1: li が最も個別カードを正確に囲む（ul>li 構造）
-          let wrapper = a.closest('li');
-          // Step 2: account 系クラス（li が見つからない場合）
-          if (!wrapper) {
-            wrapper = a.closest(
-              '.account-item-detail-table, .account-item, [class*="account-item"], [class*="account_item"]'
-            );
+        // 「引き落とし日:」はクレカ固有キーワード（銀行口座・年金には存在しない）
+        // > li で直接の子要素のみ取得（入れ子の li を除外するため）
+        const topLevelLis = document.querySelectorAll('.facilities.accounts-list > li');
+        if (topLevelLis.length > 0) {
+          const cardLis = Array.from(topLevelLis).filter(li =>
+            li.innerText.includes('引き落とし日:')
+          );
+          if (cardLis.length > 0) {
+            return cardLis.map(li => li.innerText.trim());
           }
-          // Step 3: DOM を 5 段上がって li または account/card 系クラスを探す（section は対象外）
-          if (!wrapper) {
-            let el = a.parentElement;
-            for (let i = 0; i < 5 && el; i++, el = el.parentElement) {
-              const tag = el.tagName;
-              const cls = (el.className || '').toLowerCase();
-              if (tag === 'LI') { wrapper = el; break; }
-              if (cls.includes('account') || cls.includes('card-info') || cls.includes('service-account')) {
-                wrapper = el; break;
-              }
-            }
-          }
-          // Step 4: 絶対フォールバック（親要素 2〜3 段上、section には届きにくい）
-          if (!wrapper) {
-            wrapper = a.parentElement?.parentElement?.parentElement
-              || a.parentElement?.parentElement
-              || a.parentElement;
-          }
-          return wrapper ? wrapper.innerText : '';
-        });
+        }
+        // フォールバック: ページ全体で「引き落とし日:」を含む最上位 li を探す
+        // closest('li') で祖先に li がないものだけを取得し入れ子を除外する
+        const fallbackLis = Array.from(document.querySelectorAll('li')).filter(li =>
+          li.innerText.includes('引き落とし日:') &&
+          !li.parentElement.closest('li')
+        );
+        return fallbackLis.map(li => li.innerText.trim()).filter(t => t.length > 10);
       });
 
       process.stderr.write(`[browser-scraper] Card anchors found: ${cardBlocks.length} on ${url}\n`);
@@ -753,9 +791,17 @@ async function scrapePortfolio(page) {
         const text = (cellTexts[0] ?? "").trim();
         if (text && !text.startsWith('\u2039') && !text.startsWith('\u203A') &&
             !text.startsWith('<') && !text.startsWith('>')) {
-          currentInstitution = text;
-          lastCashInstitution = text;
-          process.stderr.write(`[browser-scraper] institution(colspan) "${text}"\n`);
+          const isCalendarText = (
+            /^\d{4}(\d{4}){3,}/.test(text) ||           // 年の連結文字列（"20192020202120222023..."）
+            /^(\d{1,2}月\s*){3,}/.test(text) ||         // 月の連結文字列（"1月2月3月..."）
+            /^\d+$/.test(text) ||                        // 純粋な数字のみ
+            text.length > 80                             // 長すぎるテキスト（金融機関名は通常30文字以下）
+          );
+          if (!isCalendarText) {
+            currentInstitution = text;
+            lastCashInstitution = text;
+            process.stderr.write(`[browser-scraper] institution(colspan) "${text}"\n`);
+          }
         }
         continue;
       }
@@ -779,8 +825,11 @@ async function scrapePortfolio(page) {
           lastCashInstitution = "";
         } else {
           // CATEGORY_MAP にない th>a（機関名リンクなど）は機関名として追跡
-          currentInstitution = catName;
-          lastCashInstitution = catName;
+          // ページネーション要素（‹, ›）は機関名として扱わない
+          if (!/^[‹›<>]$/.test(thAnchorText.trim())) {
+            currentInstitution = catName;
+            lastCashInstitution = catName;
+          }
         }
       } else {
         const possibleInstitution = (cellTexts[0] ?? "").trim();
@@ -790,6 +839,8 @@ async function scrapePortfolio(page) {
         }
       }
     } else if (count >= 13) {
+      if (isHeaderRow(cellTexts)) continue;
+      if (isSummaryRow(cellTexts)) continue;
       if (stockDebugCount < 5) {
         process.stderr.write(`[DEBUG STOCK ROW] count=${cellTexts.length}, cells=${JSON.stringify(cellTexts)}\n`);
         stockDebugCount++;
@@ -831,12 +882,15 @@ async function scrapePortfolio(page) {
         const resolvedType = (detectedType === 'CASH' && currentCategory !== 'CASH')
           ? currentCategory
           : detectedType;
+        const rowInstitution = (colMap.institution >= 0 && cellTexts[colMap.institution]?.trim())
+          ? cellTexts[colMap.institution].trim()
+          : null;
         holdings.push({
           symbol, name,
           assetType: resolvedType,
           valueJpy, unrealizedPnlJpy,
           quantity, priceJpy, costBasisJpy, costPerUnitJpy,
-          institutionName: currentInstitution || null,
+          institutionName: rowInstitution || currentInstitution || null,
           dividendFrequency: null,
           dividendAmount: null,
           dividendRate: null,
@@ -852,7 +906,7 @@ async function scrapePortfolio(page) {
       if (holdings.length < 3) {
         process.stderr.write(`[DEBUG] cash row: count=${count}, name="${name}", balance="${cellTexts[1]}"\n`);
       }
-      if (name && balance > 0 && !/[\u2039\u203A]/.test(name)) {
+      if (name && balance > 0 && !/[\u2039\u203A]/.test(name) && !/^\d+$/.test(name)) {
         const fullName = lastCashInstitution ? `${lastCashInstitution}[${name}]` : name;
         holdings.push({
           symbol: "", name: fullName, assetType: currentCategory,
@@ -869,6 +923,8 @@ async function scrapePortfolio(page) {
         });
       }
     } else if (count >= 6 && count < 13) {
+      if (isHeaderRow(cellTexts)) continue;
+      if (isSummaryRow(cellTexts)) continue;
       // 投資信託・年金など中間列数の行（cashより多く、株式テーブルより少ない）
       // 評価額は後ろから3列目を想定（損益率・損益額・評価額の並び）
       const name = cellTexts[0] ?? "";
@@ -881,7 +937,8 @@ async function scrapePortfolio(page) {
       const isValidName = name.length > 1 
         && !/[\u2039\u203A]/.test(name)  // ‹/› ページネーション要素を除外
         && !name.startsWith('<')
-        && !/^\s*$/.test(name);
+        && !/^\s*$/.test(name)
+        && !/^\d+$/.test(name);          // 数字のみの名前を除外（カレンダー月数等）
       if (name && balance > 0 && isValidName) {
         const fullName = currentInstitution ? `${currentInstitution}[${name}]` : name;
         holdings.push({
