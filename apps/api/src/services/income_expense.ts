@@ -41,7 +41,7 @@ export interface CcBalanceStatus {
 
 export interface CcAccountMapping {
   mapping: Record<string, number>;  // card_name → asset_id
-  accounts: Array<{ assetId: number; name: string; balanceJpy: number }>;
+  accounts: Array<{ assetId: number; name: string; institutionName: string | null; balanceJpy: number }>;
 }
 
 export async function getUpcomingWithdrawals(_days: number): Promise<UpcomingWithdrawalsResult> {
@@ -190,13 +190,14 @@ export async function getCcAccountMapping(): Promise<CcAccountMapping> {
     .limit(1)
     .get();
 
-  let accounts: Array<{ assetId: number; name: string; balanceJpy: number }> = [];
+  let accounts: Array<{ assetId: number; name: string; institutionName: string | null; balanceJpy: number }> = [];
 
   if (latestCashDateRow) {
     const cashRows = db
       .select({
         assetId: assets.id,
         name: assets.name,
+        institutionName: assets.institutionName,
         valueJpy: portfolioSnapshots.valueJpy,
       })
       .from(assets)
@@ -207,6 +208,7 @@ export async function getCcAccountMapping(): Promise<CcAccountMapping> {
     accounts = cashRows.map((r) => ({
       assetId: r.assetId,
       name: r.name,
+      institutionName: r.institutionName ?? null,
       balanceJpy: r.valueJpy,
     }));
   }

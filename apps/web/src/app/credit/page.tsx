@@ -13,6 +13,7 @@ interface WithdrawalRow {
 interface Account {
   assetId: number;
   name: string;
+  institutionName: string | null;
   balanceJpy: number;
 }
 
@@ -233,7 +234,7 @@ export default function CreditPage() {
                           <option value="">口座を選択</option>
                           {accounts.map((acc) => (
                             <option key={acc.assetId} value={acc.assetId}>
-                              {acc.name}（{formatJpy(acc.balanceJpy)}）
+                              {acc.institutionName ? `${acc.institutionName} - ${acc.name}` : acc.name}（{formatJpy(acc.balanceJpy)}）
                             </option>
                           ))}
                         </select>
