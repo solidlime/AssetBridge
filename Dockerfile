@@ -31,8 +31,8 @@ RUN pnpm install --frozen-lockfile
 FROM dependencies AS builder
 WORKDIR /app
 
-# Run Turbo build for all apps
-RUN pnpm build
+# Run Next.js build only (api/mcp/crawler/discord-bot are run directly via tsx)
+RUN pnpm --filter @assetbridge/web build
 
 # ====================================
 # Stage 3: Runner (Production)
