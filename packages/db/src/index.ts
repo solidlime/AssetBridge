@@ -4,3 +4,7 @@ export { SettingsRepo } from "./repos/settings";
 export { AssetsRepo } from "./repos/assets";
 export { SnapshotsRepo, DailyTotalsRepo } from "./repos/snapshots";
 export { JobQueueRepo } from "./repos/job-queue";
+export { AppLogsRepo } from "./repos/app_logs";
+export { FixedExpensesRepo } from "./repos/fixed_expenses";
+export { CreditCardDetailsRepo } from "./repos/credit_card_details";
+export { DividendDataRepo } from "./repos/dividend_data";

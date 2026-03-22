@@ -22,6 +22,7 @@ type DbRow = {
     dividendRate: number | null;
     nextExDividendDate: string | null;
     currentPriceJpy: number | null;
+    currentPriceNative: number | null;
   };
   assets: {
     symbol: string;
@@ -141,6 +142,7 @@ export function mapToHoldingItems(
       priceJpy: r.portfolio_snapshots.priceJpy,
       costPerUnitJpy: r.portfolio_snapshots.costPerUnitJpy,
       currentPriceJpy: r.portfolio_snapshots.currentPriceJpy ?? undefined,
+      currentPriceNative: r.portfolio_snapshots.currentPriceNative ?? null,
       valueDiffJpy,
       valueDiffPct,
       priceDiffPct: quotes.get(r.assets.symbol) ?? null,
@@ -223,6 +225,22 @@ export async function getSnapshot(date?: string): Promise<PortfolioSnapshot> {
     totalJpy: currentTotal,
     prevDiffJpy,
     prevDiffPct,
+    prevMonthDiffJpy:    latestTotalRow?.prevMonthDiffJpy    ?? null,
+    prevMonthDiffPct:    latestTotalRow?.prevMonthDiffPct    ?? null,
+    prevYearDiffJpy:     latestTotalRow?.prevYearDiffJpy     ?? null,
+    prevYearDiffPct:     latestTotalRow?.prevYearDiffPct     ?? null,
+    stockJpPrevDiffJpy:  latestTotalRow?.stockJpPrevDiffJpy  ?? null,
+    stockJpPrevDiffPct:  latestTotalRow?.stockJpPrevDiffPct  ?? null,
+    stockUsPrevDiffJpy:  latestTotalRow?.stockUsPrevDiffJpy  ?? null,
+    stockUsPrevDiffPct:  latestTotalRow?.stockUsPrevDiffPct  ?? null,
+    fundPrevDiffJpy:     latestTotalRow?.fundPrevDiffJpy     ?? null,
+    fundPrevDiffPct:     latestTotalRow?.fundPrevDiffPct     ?? null,
+    cashPrevDiffJpy:     latestTotalRow?.cashPrevDiffJpy     ?? null,
+    cashPrevDiffPct:     latestTotalRow?.cashPrevDiffPct     ?? null,
+    pensionPrevDiffJpy:  latestTotalRow?.pensionPrevDiffJpy  ?? null,
+    pensionPrevDiffPct:  latestTotalRow?.pensionPrevDiffPct  ?? null,
+    pointPrevDiffJpy:    latestTotalRow?.pointPrevDiffJpy    ?? null,
+    pointPrevDiffPct:    latestTotalRow?.pointPrevDiffPct    ?? null,
     breakdown,
     allocationPct,
     topGainers,
@@ -290,6 +308,7 @@ export async function getHoldings(filter: {
         dividendRate: portfolioSnapshots.dividendRate,
         nextExDividendDate: portfolioSnapshots.nextExDividendDate,
         currentPriceJpy: portfolioSnapshots.currentPriceJpy,
+        currentPriceNative: portfolioSnapshots.currentPriceNative,
       },
       assets: {
         symbol: assets.symbol,

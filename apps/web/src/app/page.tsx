@@ -2,6 +2,7 @@ import { trpc } from "@/lib/trpc";
 import { formatJpy, formatPct, diffColor } from "@/lib/format";
 import AssetHistoryChart from "@/components/charts/AssetHistoryChart";
 import AllocationChart from "@/components/charts/AllocationChart";
+import MonthlyExpenseChart from "@/components/charts/MonthlyExpenseChart";
 
 const ALLOC_LABEL_MAP: Record<string, string> = {
   stockJpJpy: "日本株",
@@ -50,6 +51,12 @@ function formatDate(dateStr: string): string {
   const m = dateStr.slice(5, 7);
   const d = dateStr.slice(8, 10);
   return `${y}/${m}/${d}`;
+}
+
+function fmtDiffPct(pct: number | null | undefined): string {
+  if (pct == null) return "—";
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(2)}%`;
 }
 
 function daysUntil(dateStr: string): number {
@@ -121,22 +128,55 @@ export default async function DashboardPage() {
           <div style={{ fontSize: 14, color: diffColor(diffJpy), marginTop: 4 }}>
             {sign}{formatJpy(Math.abs(diffJpy))} ({formatPct(diffPct)})
           </div>
+          <div style={{ display: "flex", gap: 16, marginTop: 6, fontSize: 12, flexWrap: "wrap" }}>
+            <span style={{ color: "#64748b" }}>
+              前月比:{" "}
+              <span style={{ color: snapshot?.prevMonthDiffJpy != null ? diffColor(snapshot.prevMonthDiffJpy) : "#64748b" }}>
+                {fmtDiffPct(snapshot?.prevMonthDiffPct)}
+              </span>
+            </span>
+            <span style={{ color: "#64748b" }}>
+              前年比:{" "}
+              <span style={{ color: snapshot?.prevYearDiffJpy != null ? diffColor(snapshot.prevYearDiffJpy) : "#64748b" }}>
+                {fmtDiffPct(snapshot?.prevYearDiffPct)}
+              </span>
+            </span>
+          </div>
         </div>
 
         {/* カテゴリ別内訳 */}
-        {snapshot?.breakdown && Object.entries({
-          "日本株": (snapshot.breakdown as any).stockJpJpy,
-          "米国株": (snapshot.breakdown as any).stockUsJpy,
-          "投資信託": (snapshot.breakdown as any).fundJpy,
-          "現金": (snapshot.breakdown as any).cashJpy,
-          "年金": (snapshot.breakdown as any).pensionJpy,
-          "ポイント": (snapshot.breakdown as any).pointJpy,
-        }).map(([name, value]) => (
-          <div key={name} style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
-            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>{name}</div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{formatJpy(value as number)}</div>
-          </div>
-        ))}
+        {snapshot?.breakdown && (() => {
+          const cats: Array<{
+            name: string;
+            valueKey: string;
+            diffJpy: number | null | undefined;
+            diffPct: number | null | undefined;
+          }> = [
+            { name: "日本株",    valueKey: "stockJpJpy",  diffJpy: snapshot.stockJpPrevDiffJpy,  diffPct: snapshot.stockJpPrevDiffPct  },
+            { name: "米国株",    valueKey: "stockUsJpy",  diffJpy: snapshot.stockUsPrevDiffJpy,  diffPct: snapshot.stockUsPrevDiffPct  },
+            { name: "投資信託",  valueKey: "fundJpy",     diffJpy: snapshot.fundPrevDiffJpy,     diffPct: snapshot.fundPrevDiffPct     },
+            { name: "現金",      valueKey: "cashJpy",     diffJpy: snapshot.cashPrevDiffJpy,     diffPct: snapshot.cashPrevDiffPct     },
+            { name: "年金",      valueKey: "pensionJpy",  diffJpy: snapshot.pensionPrevDiffJpy,  diffPct: snapshot.pensionPrevDiffPct  },
+            { name: "ポイント",  valueKey: "pointJpy",    diffJpy: snapshot.pointPrevDiffJpy,    diffPct: snapshot.pointPrevDiffPct    },
+          ];
+          return cats.map(({ name, valueKey, diffJpy, diffPct }) => {
+            const value = (snapshot.breakdown as Record<string, number>)[valueKey] ?? 0;
+            const diffSign = (diffJpy ?? 0) >= 0 ? "+" : "";
+            const diffColor2 = diffJpy == null ? "#64748b" : diffJpy >= 0 ? "#4ade80" : "#f87171";
+            return (
+              <div key={name} style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>{name}</div>
+                <div style={{ fontSize: 20, fontWeight: 700 }}>{formatJpy(value)}</div>
+                {diffJpy != null && (
+                  <div style={{ fontSize: 12, color: diffColor2, marginTop: 4 }}>
+                    {diffSign}{formatJpy(Math.abs(diffJpy))}
+                    {diffPct != null && ` / ${diffSign}${Math.abs(diffPct).toFixed(1)}%`}
+                  </div>
+                )}
+              </div>
+            );
+          });
+        })()}
       </div>
 
       {/* 資産推移グラフ（期間はコンポーネント内で自律取得） */}
@@ -290,6 +330,12 @@ export default async function DashboardPage() {
           </div>
         )}
       </div>
+
+        {/* 月別支出予定グラフ */}
+        <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>📅 月別支出予定</h2>
+          <MonthlyExpenseChart />
+        </div>
 
       {!snapshot && (
         <div style={{ background: "#1e293b", borderRadius: 12, padding: 24, marginBottom: 24 }}>
