@@ -128,7 +128,130 @@ pm2 start ecosystem.config.cjs
 - 🤝 **Crawler**: スケジュール実行（デフォルト: 毎日 10:00）
 - 💬 **Discord Bot**: 自動レポート（DISCORD_TOKEN 設定時）
 
-## 🔧 サービス管理
+---
+
+## 🐳 Docker での実行
+
+Docker を使えば、依存関係の管理や環境構築を気にせず、コンテナ一発で全サービスを起動できます。
+
+### 前提条件
+
+- Docker Desktop がインストールされていること
+- Docker Compose v2 以上が使用可能なこと
+
+### 1. 環境変数を設定
+
+```bash
+# .env.example をコピーして .env を作成
+cp .env.example .env
+
+# 必要な値を編集
+# - MF_EMAIL / MF_PASSWORD（必須）
+# - DISCORD_TOKEN / DISCORD_CHANNEL_ID（オプション）
+# - API_KEY（推奨: ランダムな強力な値に変更）
+# - LLM API キー（オプション）
+```
+
+**重要**: `.env` ファイルは Git 管理外です。機密情報を直接記入してください。
+
+### 2. Docker イメージをビルドして起動
+
+```bash
+# ビルド & バックグラウンド起動
+docker compose up -d --build
+
+# ログをリアルタイム確認
+docker compose logs -f
+
+# 特定サービスのログのみ確認
+docker compose logs -f assetbridge
+```
+
+### 3. サービスにアクセス
+
+起動後、以下のサービスが利用可能：
+
+| サービス | URL | 説明 |
+|---------|-----|------|
+| **Web Dashboard** | http://localhost:3000 | Next.js ダッシュボード |
+| **API Server** | http://localhost:8000 | Hono + tRPC REST API |
+| **MCP Server** | http://localhost:8001 | Model Context Protocol Server |
+
+### 4. データの永続化
+
+SQLite データベースは `./data/` ディレクトリにマウントされます。
+コンテナを削除してもデータは保持されます。
+
+```bash
+# データベースファイルの確認
+ls -lh data/assetbridge_v2.db*
+```
+
+### 5. コンテナの管理
+
+```bash
+# コンテナの状態確認
+docker compose ps
+
+# コンテナの再起動
+docker compose restart
+
+# コンテナの停止
+docker compose stop
+
+# コンテナの削除（データは保持）
+docker compose down
+
+# コンテナとボリュームを完全削除（データも削除）
+docker compose down -v
+```
+
+### 6. トラブルシューティング
+
+#### ログの確認
+
+```bash
+# すべてのサービスのログ
+docker compose logs -f
+
+# 直近100行を表示
+docker compose logs --tail=100
+```
+
+#### コンテナ内でのシェル実行
+
+```bash
+# コンテナ内に入る
+docker compose exec assetbridge sh
+
+# PM2 の状態確認
+docker compose exec assetbridge pm2 status
+
+# PM2 ログ確認
+docker compose exec assetbridge pm2 logs
+```
+
+#### ビルドキャッシュのクリア
+
+```bash
+# キャッシュを使わずに完全リビルド
+docker compose build --no-cache
+docker compose up -d
+```
+
+### Docker と ローカル環境の違い
+
+| 項目 | ローカル環境 | Docker 環境 |
+|------|-------------|------------|
+| **Runtime** | Bun 1.1+ | Node.js 20 + tsx |
+| **環境変数** | `~/.assetbridge/.env` | `./.env` |
+| **データベース** | `./data/assetbridge_v2.db` | `/app/data/assetbridge_v2.db` (マウント) |
+| **Playwright** | システムブラウザ | Alpine Chromium (自動設定) |
+| **PM2 設定** | `ecosystem.config.cjs` | `ecosystem.docker.config.cjs` |
+
+---
+
+## 🔧 サービス管理（ローカル環境）
 
 ### 起動
 

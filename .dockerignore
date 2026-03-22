@@ -1,0 +1,87 @@
+# Dependencies
+node_modules
+**/node_modules
+.pnp
+.pnp.js
+
+# Build outputs
+dist
+**/dist
+.next
+**/.next
+out
+**/out
+.turbo
+**/.turbo
+*.tsbuildinfo
+
+# Environment files (use env_file in docker-compose instead)
+.env
+.env.*
+!.env.example
+.env.local
+.env.secrets
+
+# Data and databases (mounted as volumes)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/sessions/
+data/screenshots/
+data/.encryption_key
+data/*.png
+data/*.jpg
+
+# Logs (mounted as volumes)
+logs/
+*.log
+
+# Testing
+test-results/
+playwright-report/
+coverage/
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Agent and CI/CD
+.agent/
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python (if any)
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Scripts (may contain local paths)
+scripts/

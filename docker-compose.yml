@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  assetbridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: assetbridge
+    ports:
+      - "3000:3000"  # Web Dashboard (Next.js)
+      - "8000:8000"  # API Server (Hono + tRPC)
+      - "8001:8001"  # MCP Server
+    volumes:
+      # Persist SQLite database
+      - ./data:/app/data
+      # Persist logs
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      # Override environment for Docker
+      - NODE_ENV=production
+      - DATABASE_URL=/app/data/assetbridge_v2.db
+      - API_URL=http://localhost:8000
+      # Playwright configuration
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+      - PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8000/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); })"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - assetbridge-network
+
+networks:
+  assetbridge-network:
+    driver: bridge

@@ -284,6 +284,33 @@ export default function SettingsPage() {
           <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>
             スクレイプスケジュール
           </h2>
+          {settingsUpdatedAt?.scrapeSchedule ? (
+            <span
+              style={{
+                fontSize: 11,
+                color: "#4ade80",
+                background: "#14532d",
+                borderRadius: 4,
+                padding: "2px 8px",
+                fontWeight: 600,
+              }}
+            >
+              ✅ 設定済み
+            </span>
+          ) : (
+            <span
+              style={{
+                fontSize: 11,
+                color: "#94a3b8",
+                background: "#1e293b",
+                borderRadius: 4,
+                padding: "2px 8px",
+                fontWeight: 600,
+              }}
+            >
+              未設定（デフォルト）
+            </span>
+          )}
           {formatUpdatedAt(settingsUpdatedAt?.scrapeSchedule) && (
             <span style={{ fontSize: 12, color: "#64748b" }}>
               最終更新: {formatUpdatedAt(settingsUpdatedAt?.scrapeSchedule)}
@@ -413,7 +440,7 @@ export default function SettingsPage() {
               <div key={key}>
                 <label htmlFor={`secret-${key}`} style={labelStyle}>
                   {SECRET_LABELS[key]}
-                  {status.isSet && (
+                  {status.isSet ? (
                     <span
                       style={{
                         marginLeft: 8,
@@ -424,7 +451,20 @@ export default function SettingsPage() {
                         padding: "1px 6px",
                       }}
                     >
-                      設定済み: {status.masked}
+                      ✅ 設定済み: {status.masked}
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 11,
+                        color: "#94a3b8",
+                        background: "#1e293b",
+                        borderRadius: 4,
+                        padding: "1px 6px",
+                      }}
+                    >
+                      未設定
                     </span>
                   )}
                 </label>
@@ -504,6 +544,33 @@ export default function SettingsPage() {
       <div style={cardStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Discord 設定</h2>
+          {(secretStatus.discord_token?.isSet || discordChannelId) ? (
+            <span
+              style={{
+                fontSize: 11,
+                color: "#4ade80",
+                background: "#14532d",
+                borderRadius: 4,
+                padding: "2px 8px",
+                fontWeight: 600,
+              }}
+            >
+              ✅ 設定済み
+            </span>
+          ) : (
+            <span
+              style={{
+                fontSize: 11,
+                color: "#94a3b8",
+                background: "#1e293b",
+                borderRadius: 4,
+                padding: "2px 8px",
+                fontWeight: 600,
+              }}
+            >
+              未設定
+            </span>
+          )}
           {formatUpdatedAt(settingsUpdatedAt?.discordChannelId) && (
             <span style={{ fontSize: 12, color: "#64748b" }}>
               最終更新: {formatUpdatedAt(settingsUpdatedAt?.discordChannelId)}
@@ -515,6 +582,20 @@ export default function SettingsPage() {
           <div>
             <label htmlFor="discord-channel" style={labelStyle}>
               チャンネル ID
+              {discordChannelId && settingsUpdatedAt?.discordChannelId ? (
+                <span
+                  style={{
+                    marginLeft: 8,
+                    fontSize: 11,
+                    color: "#4ade80",
+                    background: "#14532d",
+                    borderRadius: 4,
+                    padding: "1px 6px",
+                  }}
+                >
+                  設定済み
+                </span>
+              ) : null}
             </label>
             <input
               id="discord-channel"
@@ -532,7 +613,7 @@ export default function SettingsPage() {
               <div key={key}>
                 <label htmlFor={`secret-${key}`} style={labelStyle}>
                   {SECRET_LABELS[key]}
-                  {status.isSet && (
+                  {status.isSet ? (
                     <span
                       style={{
                         marginLeft: 8,
@@ -543,7 +624,20 @@ export default function SettingsPage() {
                         padding: "1px 6px",
                       }}
                     >
-                      設定済み: {status.masked}
+                      ✅ 設定済み: {status.masked}
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 11,
+                        color: "#94a3b8",
+                        background: "#1e293b",
+                        borderRadius: 4,
+                        padding: "1px 6px",
+                      }}
+                    >
+                      未設定
                     </span>
                   )}
                 </label>
@@ -592,7 +686,7 @@ export default function SettingsPage() {
               <div key={key}>
                 <label htmlFor={`secret-${key}`} style={labelStyle}>
                   {SECRET_LABELS[key]}
-                  {status.isSet && (
+                  {status.isSet ? (
                     <span
                       style={{
                         marginLeft: 8,
@@ -603,7 +697,20 @@ export default function SettingsPage() {
                         padding: "1px 6px",
                       }}
                     >
-                      設定済み: {status.masked}
+                      ✅ 設定済み: {status.masked}
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 11,
+                        color: "#94a3b8",
+                        background: "#1e293b",
+                        borderRadius: 4,
+                        padding: "1px 6px",
+                      }}
+                    >
+                      未設定
                     </span>
                   )}
                 </label>
