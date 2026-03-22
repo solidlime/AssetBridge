@@ -23,6 +23,7 @@ export class DividendDataRepo {
         set: {
           months: data.months,
           annualJpy: data.annualJpy,
+          perPaymentJpy: data.perPaymentJpy,
           isUnknown: data.isUnknown,
           scrapedAt: data.scrapedAt ?? new Date().toISOString(),
         },

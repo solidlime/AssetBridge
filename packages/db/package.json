@@ -12,7 +12,8 @@
     "./repos/job-queue": "./src/repos/job-queue.ts",
     "./repos/fixed_expenses": "./src/repos/fixed_expenses.ts",
     "./repos/credit_card_details": "./src/repos/credit_card_details.ts",
-    "./repos/dividend_data": "./src/repos/dividend_data.ts"
+    "./repos/dividend_data": "./src/repos/dividend_data.ts",
+    "./repos/app_logs": "./src/repos/app_logs.ts"
   },
   "scripts": {
     "test": "bun test",

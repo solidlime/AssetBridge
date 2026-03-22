@@ -4,6 +4,7 @@ import cron from "node-cron";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import type { AppRouter } from "@assetbridge/api/router";
 import { loadEnv } from "./env";
+import { logDiscord } from "./lib/logger";
 
 loadEnv();
 
@@ -98,8 +99,10 @@ async function sendMorningReport(client: Client, channelId: string): Promise<voi
 
     await (channel as any).send({ embeds: [embed] });
     console.log("[discord] Morning report sent");
+    logDiscord("info", "朝レポート送信完了", { channelId, totalJpy: snapshot.totalJpy });
   } catch (e) {
     console.error("[discord] Failed to send report:", e);
+    logDiscord("error", "朝レポート送信失敗", { error: e instanceof Error ? e.message : String(e) });
   }
 }
 

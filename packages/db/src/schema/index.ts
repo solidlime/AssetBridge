@@ -8,3 +8,4 @@ export * from "./snapshots";
 export * from "./fixed_expenses";
 export * from "./credit_card_details";
 export * from "./dividend_data";
+export * from "./app_logs";

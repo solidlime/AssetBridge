@@ -226,17 +226,33 @@ export async function fetchDividendData(holding: Pick<
 }
 
 export function buildMonthlyBreakdown(
-  holdings: { 
-    annualEstJpy: number; 
-    nextExDate: string | null; 
+  holdings: {
+    annualEstJpy: number;
+    nextExDate: string | null;
     assetType: string;
     dividendFrequency?: string | null;
     nextExDividendDate?: string | null;
+    months?: string | null;
   }[]
 ): number[] {
   const monthly = Array(12).fill(0) as number[];
   for (const h of holdings) {
     if (h.annualEstJpy <= 0) continue;
+
+    // dividend_data.months が存在する場合は実際の配当月に分配（最優先）
+    if (h.months && h.months.trim()) {
+      const paymentMonths = h.months
+        .split(',')
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((m) => m >= 1 && m <= 12);
+      if (paymentMonths.length > 0) {
+        const perPayment = h.annualEstJpy / paymentMonths.length;
+        for (const m of paymentMonths) {
+          monthly[m - 1] += perPayment;
+        }
+        continue;
+      }
+    }
 
     const freq = (h.dividendFrequency ?? "").toLowerCase();
     const dateStr = h.nextExDividendDate ?? h.nextExDate;
@@ -384,12 +400,20 @@ export async function getDividendCalendar(): Promise<DividendCalendar> {
   const totalValue = holdings.reduce((a, h) => a + h.valueJpy, 0);
   const portfolioYieldPct = totalValue > 0 ? (totalAnnualEstJpy / totalValue) * 100 : 0;
 
+  // holdingsResult に months を付加した中間データ
+  const holdingsWithMonths = holdingsResult.map((h) => ({
+    ...h,
+    months: dividendDataMap.get(h.symbol)?.months ?? null,
+  }));
+
   const monthlyBreakdown = buildMonthlyBreakdown(
-    holdingsResult.map((h) => ({ 
-      ...h, 
+    holdingsWithMonths.map((h) => ({
+      annualEstJpy: h.annualEstJpy,
       nextExDate: h.nextExDate ?? null,
+      assetType: h.assetType,
       dividendFrequency: h.dividendFrequency ?? null,
       nextExDividendDate: h.nextExDividendDate ?? null,
+      months: h.months,
     }))
   );
 

@@ -42,10 +42,12 @@ const BASE_URL = "https://ssnb.x.moneyforward.com";
 const CATEGORY_MAP = {
   "預金・現金・暗号資産": "CASH",
   "現金・預金": "CASH",
+  "現金": "CASH",
   "株式（現物）": "STOCK_JP",
   "株式（日本株）": "STOCK_JP",
   "株式": "STOCK_JP",
   "外国株式": "STOCK_US",
+  "米国株式": "STOCK_US",
   "投資信託": "FUND",
   "年金": "PENSION",
   "確定拠出年金": "PENSION",
@@ -75,7 +77,7 @@ function buildColMap(headers) {
     if (h.includes('保有数') || h.includes('数量')) colMap.quantity = i;
     if (h.includes('取得単価')) colMap.costPerUnit = i;
     if (h.includes('現在値') || h.includes('現在価格')) colMap.currentPrice = i;
-    if (h.includes('評価額') && !h.includes('損益')) colMap.value = i;
+    if ((h.includes('評価額') || h.includes('現在価値') || h.includes('現在の価値') || h.includes('換算額') || h.includes('換算金額')) && !h.includes('損益')) colMap.value = i;
     if (h.includes('損益額') || (h.includes('損益') && !h.includes('率') && !h.includes('%'))) colMap.unrealizedPnl = i;
     if (h.includes('損益率') || h.includes('損益(%)')) colMap.unrealizedPnlRate = i;
     if (hn.includes('保有金融機関') || hn.includes('口座種類') || hn.includes('口座名義') || hn.includes('金融機関名') || hn.includes('機関名')) colMap.institution = i;
@@ -370,7 +372,6 @@ export async function scrapeCardsByAnchor(page) {
 
       process.stderr.write(`[browser-scraper] Card anchors found: ${cardBlocks.length} on ${url}\n`);
       for (let i = 0; i < cardBlocks.length; i++) {
-        process.stderr.write(`[browser-scraper] Card block[${i}]: ${cardBlocks[i].slice(0, 300)}\n`);
       }
 
       const seen = new Set(results.map(r => r.cardName));
@@ -379,11 +380,9 @@ export async function scrapeCardsByAnchor(page) {
         if (parsed) {
           if (!seen.has(parsed.cardName)) {
             seen.add(parsed.cardName);
-            process.stderr.write(`[browser-scraper] Parsed card: ${JSON.stringify(parsed)}\n`);
             results.push(parsed);
           }
         } else {
-          process.stderr.write(`[browser-scraper] parseCardBlock returned null for block: ${blockText.slice(0, 100)}\n`);
         }
       }
 
@@ -509,7 +508,6 @@ export async function scrapeCardsByDl(page) {
           }
           return items;
         });
-        process.stderr.write(`[browser-scraper] CF list items: ${JSON.stringify(listData)}\n`);
 
         for (const item of listData) {
           let amount = 0;
@@ -710,12 +708,15 @@ export async function scrapeMinkabuDividend(page, ticker) {
     });
 
     if (dividendMonths.length > 0 || annualDividend !== null) {
-      return { ticker, months: dividendMonths.join(','), annualJpy: annualDividend, isUnknown: false };
+      const perPaymentJpy = (dividendMonths.length > 0 && annualDividend !== null)
+        ? annualDividend / dividendMonths.length
+        : null;
+      return { ticker, months: dividendMonths.join(',') || null, annualJpy: annualDividend, perPaymentJpy, isUnknown: false };
     }
-    return { ticker, months: null, annualJpy: null, isUnknown: true };
+    return { ticker, months: null, annualJpy: null, perPaymentJpy: null, isUnknown: true };
   } catch (err) {
     process.stderr.write(`[scrapeMinkabuDividend] failed for ${ticker}: ${err.message}\n`);
-    return { ticker, months: null, annualJpy: null, isUnknown: true };
+    return { ticker, months: null, annualJpy: null, perPaymentJpy: null, isUnknown: true };
   }
 }
 
@@ -747,6 +748,61 @@ async function scrapePortfolio(page) {
   const tableData = await page.evaluate(() => {
     const results = [];
     const allTables = Array.from(document.querySelectorAll('table'));
+
+    // 各テーブルの parent セクション内カテゴリ名を探す
+    const _catKW2 = ['預金', '現金', '株式', '投資信託', '年金', 'ポイント', 'マイル', '暗号資産', '外国株式', '外貨', '保険'];
+    const tableContexts = allTables.map((table, idx) => {
+      const parent = table.parentElement;
+      const prev = table.previousElementSibling;
+      // parent 内でテーブルより前にある全要素のテキストを確認してカテゴリを検索
+      let categoryFromParent = null;
+      let categoryFromGrandparent = null;
+      if (parent) {
+        let sib = parent.firstElementChild;
+        while (sib && sib !== table && !categoryFromParent) {
+          const txt = (sib.innerText || '').trim();
+          if (txt && txt.length < 80 && _catKW2.some(kw => txt.includes(kw))) categoryFromParent = txt;
+          sib = sib.nextElementSibling;
+        }
+        // grandparent も確認
+        const gp = parent.parentElement;
+        if (gp && !categoryFromParent) {
+          let gsib = gp.firstElementChild;
+          while (gsib && gsib !== parent && !categoryFromGrandparent) {
+            const txt = (gsib.innerText || '').trim();
+            if (txt && txt.length < 80 && _catKW2.some(kw => txt.includes(kw))) categoryFromGrandparent = txt;
+            gsib = gsib.nextElementSibling;
+          }
+        }
+      }
+      // サマリー表のアンカーリンク href から category section の id を取得してマッピング
+      const anchorLinks = Array.from(document.querySelectorAll('th a[href], td:first-child a[href]'));
+      let categoryFromAnchor = null;
+      for (const a of anchorLinks) {
+        const href = a.getAttribute('href') || '';
+        if (!href.startsWith('#') || href.length < 2) continue;
+        let targetEl;
+        try { targetEl = document.querySelector(href); } catch (_) { continue; }
+        if (!targetEl) continue;
+        const targetTable = targetEl.tagName === 'TABLE' ? targetEl : targetEl.querySelector('table');
+        if (targetTable && allTables.indexOf(targetTable) === idx) {
+          categoryFromAnchor = a.innerText.trim();
+          break;
+        }
+      }
+      return {
+        idx,
+        prevTag: prev ? prev.tagName : null,
+        prevText: prev ? (prev.innerText || '').slice(0, 60) : null,
+        parentClass: parent ? parent.className : null,
+        parentId: parent ? parent.id : null,
+        categoryFromParent,
+        categoryFromGrandparent,
+        categoryFromAnchor,
+      };
+    });
+    // results の先頭に tableContexts を特別エントリとして追加
+    results.push({ _tableContexts: tableContexts });
 
     allTables.forEach((table, tableIdx) => {
       // 各テーブルの直前セクション見出し（h2-h6）を複数パターンで探す
@@ -807,10 +863,34 @@ async function scrapePortfolio(page) {
         }
       }
 
-      for (const row of table.querySelectorAll('tbody tr')) {
+      // パターン6: 祖先要素を最大10レベル遡り、カテゴリキーワードを含む h2-h6 を探す
+      // テーブルが institution 要素の内部にあり、カテゴリ見出しが兄弟ではなく上位にある場合に対応。
+      // カテゴリキーワードを含む場合のみ採用し、機関名の誤検出を防ぐ。
+      const _catKW = ['預金', '現金', '株式', '投資信託', '年金', 'ポイント', 'マイル', '暗号資産', '外国株式', '外貨', '保険'];
+      let _catHeading = null;
+      {
+        let ancestor = table.parentElement;
+        for (let lv = 0; lv < 10 && ancestor && !_catHeading; lv++) {
+          let sib = ancestor.previousElementSibling;
+          for (let i = 0; i < 10 && sib && !_catHeading; i++, sib = sib.previousElementSibling) {
+            if (/^H[2-6]$/.test(sib.tagName)) {
+              const txt = sib.innerText.trim();
+              if (_catKW.some(kw => txt.includes(kw))) _catHeading = txt;
+            }
+          }
+          ancestor = ancestor.parentElement;
+        }
+      }
+      // パターン6で見つかったカテゴリ見出しがパターン1-5の結果より優先度が高い場合は上書き
+      // （パターン1-5が機関名を sectionHeading にセットしてしまっていても正しいカテゴリに補正）
+      if (_catHeading) sectionHeading = _catHeading;
+
+      for (const row of table.querySelectorAll('thead tr, tbody tr')) {
+        // thead の行は isFromThead フラグを付けてヘッダー行として渡す
+        const isFromThead = row.closest('thead') !== null;
         // クラスベースの合計行除外（構造的アプローチ）
-        if (row.classList.contains('total') || row.classList.contains('summary') ||
-            row.classList.contains('subtotal')) continue;
+        if (!isFromThead && (row.classList.contains('total') || row.classList.contains('summary') ||
+            row.classList.contains('subtotal'))) continue;
         const cells = row.querySelectorAll('td, th');
         const cellTexts = Array.from(cells).map(c => c.innerText.trim());
         // テキストベースのフォールバック合計行除外（「（合計）」を含む行）
@@ -819,7 +899,12 @@ async function scrapePortfolio(page) {
         // th>a を優先し、次に td:first-child>a も確認（MF の一部ページは td にリンクを置く）
         const thAnchor = row.querySelector('th a') || row.querySelector('td:first-child a');
         const thAnchorText = thAnchor ? thAnchor.innerText.trim() : null;
-        results.push({ cellTexts, thAnchorText, tableIndex: tableIdx, sectionHeading });
+        // 行の属性情報（カテゴリ判定デバッグ用）
+        const rowClass = row.className || '';
+        const tbodyEl = row.closest('tbody');
+        const tbodyClass = tbodyEl ? (tbodyEl.className || '') : '';
+        const tbodyId = tbodyEl ? (tbodyEl.id || '') : '';
+        results.push({ cellTexts, thAnchorText, tableIndex: tableIdx, sectionHeading, _catHeadingDebug: _catHeading, rowClass, tbodyClass, tbodyId, isFromThead });
       }
     });
 
@@ -827,9 +912,26 @@ async function scrapePortfolio(page) {
   });
 
   process.stderr.write(`[browser-scraper] table rows: ${tableData.length}\n`);
-  if (tableData.length > 0) {
-    process.stderr.write(`[browser-scraper] first 3 rows: ${JSON.stringify(tableData.slice(0, 3))}\n`);
+  // テーブルコンテキスト → カテゴリヒントマップ構築
+  const contextEntry = tableData.find(r => r._tableContexts);
+  const tableContextMap = {}; // tableIndex → CATEGORY_MAP 値
+  if (contextEntry) {
+    for (const ctx of contextEntry._tableContexts) {
+      const catText = ctx.categoryFromAnchor || ctx.categoryFromParent || ctx.categoryFromGrandparent;
+      if (catText) {
+        let mapped = CATEGORY_MAP[catText];
+        if (!mapped) {
+          for (const [key, val] of Object.entries(CATEGORY_MAP)) {
+            if (catText.includes(key)) { mapped = val; break; }
+          }
+        }
+        if (mapped) tableContextMap[ctx.idx] = mapped;
+      }
+    }
   }
+  const normalRows = tableData.filter(r => !r._tableContexts);
+  // 以降は normalRows を使うように tableData を上書き
+  tableData.splice(0, tableData.length, ...normalRows);
 
   // ヘッダー取得 → デバッグ出力 → colMap 構築
   let _headers = [];
@@ -837,15 +939,12 @@ async function scrapePortfolio(page) {
     _headers = await page.$$eval('table.table-portfolio thead th', ths =>
       ths.map(th => th.textContent?.trim())
     );
-    process.stderr.write(`[DEBUG HEADERS] ${JSON.stringify(_headers)}\n`);
   } catch (e) {
     try {
       _headers = await page.$$eval('table thead th', ths =>
         ths.map(th => th.textContent?.trim())
       );
-      process.stderr.write(`[DEBUG HEADERS fallback] ${JSON.stringify(_headers)}\n`);
     } catch (e2) {
-      process.stderr.write(`[DEBUG HEADERS error] ${e2.message}\n`);
     }
   }
   let colMap = buildColMap(_headers);
@@ -855,11 +954,8 @@ async function scrapePortfolio(page) {
     const headerRow = tableData.find(r => r.cellTexts.length >= 13 && r.cellTexts.some(c => c.includes('保有数') || c.includes('銘柄')));
     if (headerRow) {
       colMap = buildColMap(headerRow.cellTexts);
-      process.stderr.write(`[DEBUG HEADERS fallback from tableData] ${JSON.stringify(headerRow.cellTexts)}\n`);
     }
   }
-
-  process.stderr.write(`[DEBUG COLMAP] ${JSON.stringify(colMap)}\n`);
 
   const quantityIdx = colMap.quantity >= 0 ? colMap.quantity : 2;
   const costPerUnitIdx = colMap.costPerUnit >= 0 ? colMap.costPerUnit : 3;
@@ -872,8 +968,10 @@ async function scrapePortfolio(page) {
   let lastCashInstitution = ""; // CASH専用: POINTセクション通過後の汚染を防ぐ
   let currentCategory = "CASH";
   let lastTableIndex = -1; // テーブル境界検知用
+  let sectionColMap = null; // FUND/PENSION セクションごとの動的列マップ
+  const summaryCategories = []; // サマリー表の処理順カテゴリ（index = 詳細テーブル番号 - 1）
 
-  for (const { cellTexts, thAnchorText, tableIndex, sectionHeading } of tableData) {
+  for (const { cellTexts, thAnchorText, tableIndex, sectionHeading, isFromThead } of tableData) {
     // ── テーブル境界リセット ──────────────────────────────────────────────────
     // 新しいテーブルに入ったとき:
     //   1) currentInstitution / lastCashInstitution をリセット
@@ -883,6 +981,7 @@ async function scrapePortfolio(page) {
       lastTableIndex = tableIndex;
       currentInstitution = "";
       lastCashInstitution = "";
+      sectionColMap = null; // 新しいテーブルに入るたびに動的列マップをリセット
 
       if (sectionHeading) {
         // 完全一致を先に試みる
@@ -900,17 +999,37 @@ async function scrapePortfolio(page) {
               break;
             }
           }
-          // CATEGORY_MAP にマッチしない見出し = 金融機関名として扱う
+          // CATEGORY_MAP にマッチしない見出しの処理
           if (!matched && sectionHeading.length > 0 && 
               !sectionHeading.startsWith('\u2039') && !sectionHeading.startsWith('\u203A')) {
+            // カテゴリらしきキーワードが含まれているが MAP に登録されていない場合は警告
+            const categoryHints = ['預金', '現金', '株式', '投資', '信託', '年金', 'iDeCo', 'ポイント', 'マイル', '暗号資産', '外貨', '保険'];
+            const looksLikeCategory = categoryHints.some(hint => sectionHeading.includes(hint));
+            if (looksLikeCategory) {
+              process.stderr.write(`[browser-scraper] WARN: Table[${tableIndex}] heading "${sectionHeading}" looks like a category but is not in CATEGORY_MAP - treating as institution\n`);
+            }
             currentInstitution = sectionHeading;
             lastCashInstitution = sectionHeading;
             process.stderr.write(`[browser-scraper] Table[${tableIndex}] institution from heading="${sectionHeading}"\n`);
           }
         }
+      } else if (tableIndex > 0) {
+        // sectionHeading なし → tableContextMap → summaryCategories の順でフォールバック
+        const ctxCat = tableContextMap[tableIndex];
+        const sumCat = summaryCategories[tableIndex - 1];
+        const resolvedCat = ctxCat || sumCat;
+        if (resolvedCat) {
+          currentCategory = resolvedCat;
+          process.stderr.write(`[browser-scraper] Table[${tableIndex}] category from ${ctxCat ? 'contextMap' : 'summaryCategories'}=${currentCategory}\n`);
+        }
       }
     }
     // ─────────────────────────────────────────────────────────────────────────
+    // thead 行: sectionColMap を構築して次の行へ
+    if (isFromThead) {
+      sectionColMap = buildColMap(cellTexts);
+      continue;
+    }
     const count = cellTexts.length;
 
     if (count >= 1 && count <= 4) {
@@ -939,8 +1058,8 @@ async function scrapePortfolio(page) {
           firstCellText === '<' || firstCellText === '>') {
         continue;
       }
-      // DOM順序デバッグ: カテゴリ行を全て出力
-      process.stderr.write(`[DEBUG CAT] count=${count}, anchor="${thAnchorText}", text="${cellTexts[0]}", holdings=${holdings.length}\n`);
+      // DOM順序デバッグ: カテゴリ行を全て出力（特にTable[4]以降）
+      process.stderr.write(`[browser-scraper] cat-row Table[${tableIndex}] count=${count} anchor="${thAnchorText}" cat=${currentCategory}\n`);
       if (thAnchorText) {
         const catName = thAnchorText;
         // cellTexts[0]=カテゴリ名(th), cellTexts[1]=金額(td), cellTexts[2]=割合(td)
@@ -951,6 +1070,7 @@ async function scrapePortfolio(page) {
           currentCategory = assetType;
           currentInstitution = "";
           lastCashInstitution = "";
+          summaryCategories.push(assetType); // サマリー行の順序を記録（詳細テーブルへのフォールバック用）
         } else {
           // CATEGORY_MAP にない th>a（機関名リンクなど）は機関名として追跡
           // ページネーション要素（‹, ›）は機関名として扱わない
@@ -970,7 +1090,6 @@ async function scrapePortfolio(page) {
       if (isHeaderRow(cellTexts)) continue;
       if (isSummaryRow(cellTexts)) continue;
       if (stockDebugCount < 5) {
-        process.stderr.write(`[DEBUG STOCK ROW] count=${cellTexts.length}, cells=${JSON.stringify(cellTexts)}\n`);
         stockDebugCount++;
       }
       // MF 株式テーブル構造 (動的インデックス):
@@ -1013,6 +1132,12 @@ async function scrapePortfolio(page) {
         const rowInstitution = (colMap.institution >= 0 && cellTexts[colMap.institution]?.trim())
           ? cellTexts[colMap.institution].trim()
           : null;
+        // STOCK_US の場合のみ USD 建て現在値を取得（colMap.currentPrice が検出されている場合）
+        let currentPriceNative = null;
+        if (resolvedType === 'STOCK_US' && colMap.currentPrice >= 0) {
+          const rawPrice = parseAmount(cellTexts[colMap.currentPrice] ?? '0');
+          currentPriceNative = rawPrice > 0 ? rawPrice : null;
+        }
         holdings.push({
           symbol, name,
           assetType: resolvedType,
@@ -1026,14 +1151,12 @@ async function scrapePortfolio(page) {
           nextExDividendDate: null,
           distributionType: null,
           lastDividendUpdate: null,
+          currentPriceNative,
         });
       }
     } else if (count === 5) {
       const name = cellTexts[0] ?? "";
       const balance = parseAmount(cellTexts[1] ?? "0");
-      if (holdings.length < 3) {
-        process.stderr.write(`[DEBUG] cash row: count=${count}, name="${name}", balance="${cellTexts[1]}"\n`);
-      }
       if (name && balance > 0 && !/[\u2039\u203A]/.test(name) && !/^\d+$/.test(name)) {
         // 保有金融機関: colMap で取得できない場合は CASH テーブルの固定位置（index 2）から直接読む
         const cashInstitution = (colMap.institution >= 0 && cellTexts[colMap.institution]?.trim())
@@ -1055,15 +1178,21 @@ async function scrapePortfolio(page) {
         });
       }
     } else if (count >= 6 && count < 13) {
-      if (isHeaderRow(cellTexts)) continue;
+      if (isHeaderRow(cellTexts)) {
+        // ヘッダー行からセクション固有の列マップを構築（FUND/PENSION の動的検出用）
+        sectionColMap = buildColMap(cellTexts);
+        process.stderr.write(`[browser-scraper] FUND/PENSION header detected at Table[${tableIndex}], sectionColMap=${JSON.stringify(sectionColMap)}\n`);
+        continue;
+      }
       if (isSummaryRow(cellTexts)) continue;
       // 投資信託・年金など中間列数の行（cashより多く、株式テーブルより少ない）
-      // 評価額は後ろから3列目を想定（損益率・損益額・評価額の並び）
+      // 評価額: sectionColMap.value が有効ならそれを優先、なければ後ろから3列目のヒューリスティック
       const name = cellTexts[0] ?? "";
-      const valIdx = count - 3;
+      const valIdxFromMap = (sectionColMap?.value ?? -1) >= 0 && (sectionColMap?.value ?? -1) < count
+        ? sectionColMap.value : -1;
+      const valIdx = valIdxFromMap >= 0 ? valIdxFromMap : count - 3;
       const balance = parseAmount(cellTexts[valIdx] ?? cellTexts[1] ?? "0");
       if (holdings.length < 3) {
-        process.stderr.write(`[DEBUG] fund/pension row: count=${count}, name="${name}", balance="${cellTexts[valIdx]}"\n`);
       }
       // ゴミ行フィルタ: 名前が意味のある文字列のみ受け付ける
       const isValidName = name.length > 1 
@@ -1072,12 +1201,16 @@ async function scrapePortfolio(page) {
         && !/^\s*$/.test(name)
         && !/^\d+$/.test(name);          // 数字のみの名前を除外（カレンダー月数等）
       if (name && balance > 0 && isValidName) {
+        // 保有金融機関: sectionColMap.institution > 0 ならセル値から、なければ currentInstitution
+        const instIdxFromMap = (sectionColMap?.institution ?? -1) >= 0 && (sectionColMap?.institution ?? -1) < count
+          ? sectionColMap.institution : -1;
+        const rowInstitution = instIdxFromMap >= 0 ? (cellTexts[instIdxFromMap]?.trim() || null) : null;
         const fullName = currentInstitution ? `${currentInstitution}[${name}]` : name;
         holdings.push({
           symbol: "", name: fullName, assetType: currentCategory,
           valueJpy: balance, unrealizedPnlJpy: 0,
           quantity: balance, priceJpy: 1, costBasisJpy: balance, costPerUnitJpy: 1,
-          institutionName: currentInstitution || null,
+          institutionName: rowInstitution || currentInstitution || null,
           dividendFrequency: null,
           dividendAmount: null,
           dividendRate: null,
@@ -1088,6 +1221,20 @@ async function scrapePortfolio(page) {
         });
       }
     }
+  }
+
+  // セクション別取得件数ログ（早期発見用）
+  const countByType = {};
+  for (const h of holdings) {
+    countByType[h.assetType] = (countByType[h.assetType] || 0) + 1;
+  }
+  process.stderr.write(`[browser-scraper] holdings summary: ${JSON.stringify(countByType)} (total=${holdings.length})\n`);
+  for (const [type, cnt] of Object.entries(countByType)) {
+    process.stderr.write(`[browser-scraper] ${type}: ${cnt} item(s)\n`);
+  }
+  // 全カテゴリが 0 件の場合はスクレイプ失敗の可能性を警告
+  if (holdings.length === 0) {
+    process.stderr.write(`[browser-scraper] WARN: No holdings found - page structure may have changed\n`);
   }
 
   return { totalJpy, categories, holdings };

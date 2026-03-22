@@ -34,10 +34,11 @@ test.describe("資産一覧 React Query キャッシュ", () => {
     // 初期読み込みで 1 回だけリクエストされていることを確認
     expect(holdingsRequestCount).toBe(1);
 
-    // タブボタンが存在することを確認
-    const allTab = page.getByRole("button", { name: "全て" });
-    const jpStockTab = page.getByRole("button", { name: "日本株" });
-    const usStockTab = page.getByRole("button", { name: "米国株" });
+    // タブボタンが存在することを確認（nav にスコープして strict mode violation を回避）
+    const nav = page.locator('nav[aria-label="資産タイプフィルタ"]');
+    const allTab = nav.getByRole("button", { name: "全て" });
+    const jpStockTab = nav.getByRole("button", { name: "日本株" });
+    const usStockTab = nav.getByRole("button", { name: "米国株" });
     
     await expect(allTab).toBeVisible();
     await expect(jpStockTab).toBeVisible();

@@ -241,6 +241,7 @@ export function addFixedExpense(data: {
   withdrawalMonth?: number | null;
   category?: string | null;
   assetId?: number | null;
+  bankAccount?: string | null;
 }) {
   const repo = new FixedExpenseRepo(db);
   return repo.create(data);
@@ -256,6 +257,7 @@ export function updateFixedExpense(
     withdrawalMonth: number | null;
     category: string | null;
     assetId: number | null;
+    bankAccount: string | null;
   }>
 ) {
   const repo = new FixedExpenseRepo(db);
@@ -342,4 +344,178 @@ export function getMonthlyWithdrawalSummary(month?: string): MonthlyWithdrawalSu
 export function getCreditCardDetails() {
   const repo = new CreditCardDetailRepo(db);
   return repo.findAll();
+}
+
+export interface MonthlyCashflowItem {
+  month: string;      // "YYYY-MM"
+  creditJpy: number;
+  fixedJpy: number;
+  totalJpy: number;
+}
+
+export function getMonthlyCashflow(months: number = 6): MonthlyCashflowItem[] {
+  // 直近 months ヶ月分の月リストを生成（古い順）
+  const monthList: string[] = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    monthList.push(`${y}-${m}`);
+  }
+
+  // 固定費を全件取得
+  const fixedExpenseRepo = new FixedExpenseRepo(db);
+  const expenses = fixedExpenseRepo.findAll();
+
+  return monthList.map((targetMonth) => {
+    const [, monthStr] = targetMonth.split("-");
+    const targetMonthNum = parseInt(monthStr, 10);
+
+    // 固定費月次合計
+    let fixedJpy = 0;
+    for (const exp of expenses) {
+      if (exp.frequency === "monthly") {
+        fixedJpy += exp.amountJpy;
+      } else if (exp.frequency === "annual") {
+        fixedJpy += exp.amountJpy / 12;
+      } else if (exp.frequency === "quarterly") {
+        const startMonth = exp.withdrawalMonth ?? 1;
+        const diff = ((targetMonthNum - startMonth) % 3 + 3) % 3;
+        if (diff === 0) fixedJpy += exp.amountJpy;
+      }
+    }
+
+    // クレカ月次合計
+    const ccRows = db
+      .select({ amountJpy: creditCardWithdrawals.amountJpy })
+      .from(creditCardWithdrawals)
+      .where(like(creditCardWithdrawals.withdrawalDate, `${targetMonth}%`))
+      .all();
+    const creditJpy = ccRows.reduce((sum, r) => sum + r.amountJpy, 0);
+
+    return {
+      month: targetMonth,
+      creditJpy,
+      fixedJpy,
+      totalJpy: creditJpy + fixedJpy,
+    };
+  });
+}
+
+// ─── 口座別引き落とし合計サマリー ─────────────────────────────────────────────
+
+export interface AccountWithdrawalSummaryItem {
+  accountId: number;
+  accountName: string;
+  institutionName: string | null;
+  balanceJpy: number;
+  creditCardTotalJpy: number;
+  fixedExpenseTotalJpy: number;
+  totalWithdrawalJpy: number;
+  shortfallJpy: number;          // balanceJpy - totalWithdrawalJpy (negative = insufficient)
+  nextWithdrawalDate: string | null;
+}
+
+/**
+ * 口座ごとのクレカ引き落とし合計 + 固定費合計 を返す。
+ * shortfallJpy < 0 の場合は残高不足。
+ */
+export function getWithdrawalAccountSummary(): AccountWithdrawalSummaryItem[] {
+  const month = new Date().toISOString().slice(0, 7);
+  const [, monthStr] = month.split("-");
+  const targetMonthNum = parseInt(monthStr, 10);
+
+  // 1. CASH 口座の最新残高を取得
+  const latestCashDateRow = db
+    .select({ date: portfolioSnapshots.date })
+    .from(portfolioSnapshots)
+    .innerJoin(assets, eq(portfolioSnapshots.assetId, assets.id))
+    .where(eq(assets.assetType, "CASH"))
+    .orderBy(desc(portfolioSnapshots.date))
+    .limit(1)
+    .get();
+
+  if (!latestCashDateRow) return [];
+
+  const cashRows = db
+    .select({
+      assetId: assets.id,
+      name: assets.name,
+      institutionName: assets.institutionName,
+      balanceJpy: portfolioSnapshots.valueJpy,
+    })
+    .from(assets)
+    .innerJoin(portfolioSnapshots, eq(portfolioSnapshots.assetId, assets.id))
+    .where(and(eq(assets.assetType, "CASH"), eq(portfolioSnapshots.date, latestCashDateRow.date)))
+    .all();
+
+  // 2. cc_account_mapping を取得（cardName -> assetId）
+  const settingsRepo = new SettingsRepo(sqlite);
+  const mappingJson = settingsRepo.get("cc_account_mapping");
+  const mapping: Record<string, number> = mappingJson ? (JSON.parse(mappingJson) as Record<string, number>) : {};
+
+  // 3. 逆引きマッピング: assetId -> cardNames[]
+  const reverseMapping = new Map<number, string[]>();
+  for (const [cardName, assetId] of Object.entries(mapping)) {
+    if (!reverseMapping.has(assetId)) reverseMapping.set(assetId, []);
+    reverseMapping.get(assetId)!.push(cardName);
+  }
+
+  // 4. status='scheduled' のクレカ引き落とし全件取得
+  const ccRows = db
+    .select()
+    .from(creditCardWithdrawals)
+    .where(eq(creditCardWithdrawals.status, "scheduled"))
+    .all();
+
+  // 5. 固定費全件取得
+  const fixedExpenseRepo = new FixedExpenseRepo(db);
+  const expenses = fixedExpenseRepo.findAll();
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  return cashRows.map((account) => {
+    // クレカ合計（この口座に紐づくカードの引き落とし予定合計）
+    const cardNames = reverseMapping.get(account.assetId) ?? [];
+    const ccForAccount = ccRows.filter((r) => cardNames.includes(r.cardName));
+    const creditCardTotalJpy = ccForAccount.reduce((sum, r) => sum + r.amountJpy, 0);
+
+    // 次回引き落とし日（今日以降で最も近い日）
+    const futureDates = ccForAccount
+      .map((r) => r.withdrawalDate)
+      .filter((d) => d >= today)
+      .sort();
+    const nextWithdrawalDate = futureDates[0] ?? null;
+
+    // 固定費合計（この口座に紐づく固定費の当月換算合計）
+    const fixedForAccount = expenses.filter((e) => e.assetId === account.assetId);
+    let fixedExpenseTotalJpy = 0;
+    for (const exp of fixedForAccount) {
+      if (exp.frequency === "monthly") {
+        fixedExpenseTotalJpy += exp.amountJpy;
+      } else if (exp.frequency === "annual") {
+        fixedExpenseTotalJpy += exp.amountJpy / 12;
+      } else if (exp.frequency === "quarterly") {
+        const startMonth = exp.withdrawalMonth ?? 1;
+        const diff = ((targetMonthNum - startMonth) % 3 + 3) % 3;
+        fixedExpenseTotalJpy += diff === 0 ? exp.amountJpy : 0;
+      }
+    }
+
+    const totalWithdrawalJpy = creditCardTotalJpy + fixedExpenseTotalJpy;
+    const shortfallJpy = account.balanceJpy - totalWithdrawalJpy;
+
+    return {
+      accountId: account.assetId,
+      accountName: account.name,
+      institutionName: account.institutionName ?? null,
+      balanceJpy: account.balanceJpy,
+      creditCardTotalJpy,
+      fixedExpenseTotalJpy,
+      totalWithdrawalJpy,
+      shortfallJpy,
+      nextWithdrawalDate,
+    };
+  });
 }

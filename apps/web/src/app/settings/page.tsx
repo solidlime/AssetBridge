@@ -64,6 +64,17 @@ const MF_KEYS = ["mf_email", "mf_password"] as const;
 const DISCORD_SECRET_KEYS = ["discord_token"] as const;
 const OTHER_KEYS = ["web_api_key"] as const;
 
+function formatUpdatedAt(unixTs: number | null | undefined): string {
+  if (!unixTs) return "";
+  return new Date(unixTs * 1000).toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export default function SettingsPage() {
   // --- スクレイプスケジュール ---
   const [schedHour, setSchedHour] = useState(9);
@@ -123,6 +134,13 @@ export default function SettingsPage() {
   // --- Discord チャンネル ID ---
   const [discordChannelId, setDiscordChannelId] = useState("");
 
+  // --- 設定の最終更新時刻 ---
+  const [settingsUpdatedAt, setSettingsUpdatedAt] = useState<{
+    scrapeSchedule: number | null;
+    secrets: number | null;
+    discordChannelId: number | null;
+  } | null>(null);
+
 
 
   // --- シークレット（APIキー等） ---
@@ -162,6 +180,7 @@ export default function SettingsPage() {
           statusMap[key] = s ?? { isSet: false, masked: null };
         }
         setSecretStatus(statusMap);
+        if (d.updatedAt) setSettingsUpdatedAt(d.updatedAt);
       })
       .catch(() => {
         console.warn("設定の取得に失敗しました");
@@ -226,6 +245,7 @@ export default function SettingsPage() {
           statusMap[key] = s ?? { isSet: false, masked: null };
         }
         setSecretStatus(statusMap);
+        if (d.updatedAt) setSettingsUpdatedAt(d.updatedAt);
       }).catch(() => {});
     } else {
       showMessage(`保存に失敗した項目: ${errors.join("、")}`, false);
@@ -260,9 +280,16 @@ export default function SettingsPage() {
 
       {/* --- 1. スクレイプスケジュール --- */}
       <div style={cardStyle}>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
-          スクレイプスケジュール
-        </h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>
+            スクレイプスケジュール
+          </h2>
+          {formatUpdatedAt(settingsUpdatedAt?.scrapeSchedule) && (
+            <span style={{ fontSize: 12, color: "#64748b" }}>
+              最終更新: {formatUpdatedAt(settingsUpdatedAt?.scrapeSchedule)}
+            </span>
+          )}
+        </div>
         <p style={descStyle}>
           毎日何時何分に MoneyForward から資産データを自動取得するか設定します。
         </p>
@@ -312,7 +339,14 @@ export default function SettingsPage() {
       {/* --- 2. MoneyForward 認証情報 --- */}
       <div style={cardStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>MoneyForward 認証情報</h2>
+          <div>
+            <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>MoneyForward 認証情報</h2>
+            {formatUpdatedAt(settingsUpdatedAt?.secrets) && (
+              <span style={{ fontSize: 12, color: "#64748b" }}>
+                最終更新: {formatUpdatedAt(settingsUpdatedAt?.secrets)}
+              </span>
+            )}
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {mfStatus.status && (
               <span style={{
@@ -468,7 +502,14 @@ export default function SettingsPage() {
 
       {/* --- 3. Discord 設定 --- */}
       <div style={cardStyle}>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Discord 設定</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Discord 設定</h2>
+          {formatUpdatedAt(settingsUpdatedAt?.discordChannelId) && (
+            <span style={{ fontSize: 12, color: "#64748b" }}>
+              最終更新: {formatUpdatedAt(settingsUpdatedAt?.discordChannelId)}
+            </span>
+          )}
+        </div>
         <p style={descStyle}>通知を送信する Discord チャンネルの ID と Bot Token を設定します。</p>
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div>
@@ -525,9 +566,16 @@ export default function SettingsPage() {
 
       {/* --- 4. API キー / シークレット設定 --- */}
       <div style={cardStyle}>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
-          API キー / シークレット設定
-        </h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>
+            API キー / シークレット設定
+          </h2>
+          {formatUpdatedAt(settingsUpdatedAt?.secrets) && (
+            <span style={{ fontSize: 12, color: "#64748b" }}>
+              最終更新: {formatUpdatedAt(settingsUpdatedAt?.secrets)}
+            </span>
+          )}
+        </div>
         <p style={descStyle}>
           各種 API キーを設定します。入力欄を空白のまま保存しても既存の値は変更されません。
         </p>

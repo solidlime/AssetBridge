@@ -45,6 +45,16 @@ type MonthlyWithdrawalSummary = {
   linkedAssetIds: number[];
 };
 
+type AccountWithdrawalSummaryItem = {
+  accountId: number;
+  accountName: string;
+  institutionName: string | null;
+  balanceJpy: number;
+  totalWithdrawalJpy: number;
+  shortfallJpy: number;
+  nextWithdrawalDate: string | null;
+};
+
 function formatDate(dateStr: string): string {
   if (!dateStr || dateStr.length < 8) return dateStr;
   const y = dateStr.slice(0, 4);
@@ -69,11 +79,12 @@ function daysUntil(dateStr: string): number {
 
 async function getData() {
   const summaryMonth = new Date().toISOString().slice(0, 7);
-  const [snapshot, withdrawals, monthlySummary, fixedExpenses] = await Promise.allSettled([
+  const [snapshot, withdrawals, monthlySummary, fixedExpenses, accountSummary] = await Promise.allSettled([
     trpc.portfolio.snapshot.query({}),
     trpc.incomeExpense.upcomingWithdrawals.query({ days: 60 }),
     trpc.incomeExpense.getMonthlyWithdrawalSummary.query({ month: summaryMonth }),
     trpc.incomeExpense.getFixedExpenses.query(),
+    trpc.incomeExpense.getWithdrawalAccountSummary.query(),
   ]);
 
   return {
@@ -84,12 +95,13 @@ async function getData() {
         : { withdrawals: [], totalAmountJpy: 0, count: 0 },
     monthlySummary: monthlySummary.status === "fulfilled" ? monthlySummary.value : null,
     fixedExpenses: fixedExpenses.status === "fulfilled" ? fixedExpenses.value : [],
+    accountSummary: accountSummary.status === "fulfilled" ? accountSummary.value : [],
     summaryMonth,
   };
 }
 
 export default async function DashboardPage() {
-  const { snapshot, withdrawals, monthlySummary, fixedExpenses, summaryMonth } = await getData();
+  const { snapshot, withdrawals, monthlySummary, fixedExpenses, accountSummary, summaryMonth } = await getData();
   const diffJpy = snapshot?.prevDiffJpy ?? 0;
   const diffPct = snapshot?.prevDiffPct ?? 0;
   const sign = diffJpy >= 0 ? "+" : "";
@@ -97,6 +109,7 @@ export default async function DashboardPage() {
   const upcomingResult = withdrawals as unknown as UpcomingWithdrawalsResult;
   const monthlySummaryData = monthlySummary as MonthlyWithdrawalSummary | null;
   const fixedExpenseItems = fixedExpenses as FixedExpenseItem[];
+  const accountSummaryItems = accountSummary as AccountWithdrawalSummaryItem[];
 
   const allocations = snapshot?.allocationPct
     ? Object.entries(snapshot.allocationPct)
@@ -200,6 +213,38 @@ export default async function DashboardPage() {
         <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16, color: "#e2e8f0" }}>
           🏦 引き落とし管理
         </h2>
+
+        {/* 残高不足口座アラート */}
+        {accountSummaryItems.filter((a) => a.shortfallJpy < 0).map((item) => {
+          const shortage = Math.abs(item.shortfallJpy);
+          const accountLabel = item.institutionName
+            ? `${item.institutionName} - ${item.accountName}`
+            : item.accountName;
+          return (
+            <div
+              key={item.accountId}
+              style={{
+                background: "#450a0a",
+                border: "1px solid #f87171",
+                borderRadius: 10,
+                padding: "10px 16px",
+                marginBottom: 12,
+                fontSize: 14,
+                color: "#fca5a5",
+                fontWeight: 600,
+              }}
+            >
+              ⚠️ {accountLabel}:{" "}
+              <span style={{ fontFamily: "monospace" }}>¥{shortage.toLocaleString("ja-JP")}</span>
+              円不足
+              {item.nextWithdrawalDate && (
+                <span style={{ fontWeight: 400, marginLeft: 8, color: "#f87171" }}>
+                  （引き落とし日: {item.nextWithdrawalDate}）
+                </span>
+              )}
+            </div>
+          );
+        })}
 
         {/* 月次支出サマリーカード（横並び3枚） */}
         <div

@@ -45,6 +45,7 @@ export default function FixedExpenseForm({ onSuccess, onCancel, assets }: FixedE
         ...(withdrawalMonth ? { withdrawalMonth: Number(withdrawalMonth) } : {}),
         ...(category.trim() ? { category: category.trim() } : {}),
         ...(assetId ? { assetId: Number(assetId) } : {}),
+        bankAccount: assetId ? String(assetId) : null,
       }),
     onSuccess: () => {
       onSuccess();

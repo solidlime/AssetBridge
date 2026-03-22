@@ -292,6 +292,17 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
     data.categories["STOCK_JP"] = data.categories["STOCK_JP"] - data.categories["STOCK_US"];
   }
 
+  // CASH 資産の名前→旧 ID マッピングを保存（cc_account_mapping の ID 更新に使用）
+  // CASH 全削除→再 INSERT でオートインクリメント ID が変わるため、リマッピングが必要
+  const cashNameToOldId = new Map<string, number>();
+  for (const a of db
+    .select({ id: assets.id, name: assets.name })
+    .from(assets)
+    .where(eq(assets.assetType, "CASH"))
+    .all()) {
+    cashNameToOldId.set(a.name, a.id);
+  }
+
   // CASH/POINT/FUND/PENSION 系の資産は symbol が空文字列（name がキー）なので
   // upsert による差分更新が機能しない。scrape のたびに全削除してから再 insert する。
   // STOCK_JP/STOCK_US は symbol が一意なので upsert のまま（削除しない）。
@@ -309,6 +320,9 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
     }
     db.delete(assets).where(eq(assets.assetType, assetTypeVal)).run();
   }
+
+  // スクレイプ後の CASH 資産の名前→新 ID マッピング（cc_account_mapping 更新に使用）
+  const cashNameToNewId = new Map<string, number>();
 
   for (const h of deduplicatedHoldings) {
     const assetId = assetsRepo.upsert({
@@ -354,7 +368,12 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
       distributionType: h.distributionType ?? null,
       lastDividendUpdate: h.lastDividendUpdate ?? null,
       currentPriceJpy,
+      currentPriceNative: (h as { currentPriceNative?: number | null }).currentPriceNative ?? null,
     });
+    // CASH 資産は再 INSERT で ID が変わるため、新しい ID を記録しておく
+    if (h.assetType === "CASH") {
+      cashNameToNewId.set(h.name, assetId);
+    }
   }
 
   const prevDay = dailyRepo.getLatest();
@@ -375,8 +394,50 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
         : 0,
   });
 
+  // cc_account_mapping の CASH asset ID が変わった場合、設定を自動更新する
+  // （CASH 全削除→再 INSERT でオートインクリメント ID が変わるため）
+  {
+    const idRemap = new Map<number, number>(); // oldId → newId
+    for (const [name, newId] of cashNameToNewId.entries()) {
+      const oldId = cashNameToOldId.get(name);
+      if (oldId !== undefined && oldId !== newId) {
+        idRemap.set(oldId, newId);
+      }
+    }
+    if (idRemap.size > 0) {
+      const mappingJson = settingsRepo.get("cc_account_mapping");
+      if (mappingJson) {
+        const mapping = JSON.parse(mappingJson) as Record<string, number>;
+        let changed = false;
+        for (const [cardName, mappingAssetId] of Object.entries(mapping)) {
+          const newId = idRemap.get(mappingAssetId);
+          if (newId !== undefined) {
+            mapping[cardName] = newId;
+            changed = true;
+          }
+        }
+        if (changed) {
+          settingsRepo.set("cc_account_mapping", JSON.stringify(mapping));
+          process.stderr.write(
+            `[mf_sbi_bank] cc_account_mapping: ${idRemap.size} CASH asset ID(s) remapped after scrape\n`
+          );
+        }
+      }
+    }
+  }
+
   // クレカ引き落とし情報を DB に保存
   if (data.creditCardWithdrawals && data.creditCardWithdrawals.length > 0) {
+    // 既存の bank_account 値を保存（スクレイパーは常に null を返すため、手動設定値を引き継ぐ）
+    const existingBankAccounts = new Map<string, string | null>();
+    for (const r of db
+      .select({ cardName: creditCardWithdrawals.cardName, bankAccount: creditCardWithdrawals.bankAccount })
+      .from(creditCardWithdrawals)
+      .where(eq(creditCardWithdrawals.status, "scheduled"))
+      .all()) {
+      existingBankAccounts.set(r.cardName, r.bankAccount);
+    }
+
     // スクレイプのたびに scheduled を全件削除して最新状態に更新
     // （過去日付の重複レコードを防ぐため、日付絞り込みなし）
     db.delete(creditCardWithdrawals)
@@ -391,7 +452,8 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
           withdrawalDate: w.withdrawalDate,
           amountJpy: w.amountJpy,
           status: w.status,
-          bankAccount: (w.bankAccount?.trim() || null),
+          // スクレイパーが値を提供した場合はそれを使用、そうでない場合は既存値を引き継ぐ
+          bankAccount: w.bankAccount?.trim() || existingBankAccounts.get(w.cardName) || null,
           scrapedAt,
         })
         .run();

@@ -71,8 +71,8 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         PORT: 3000,
-        API_KEY: "test",
-        API_URL: "http://localhost:8000",
+        API_KEY: process.env.API_KEY || "test",
+        API_URL: process.env.API_URL || "http://localhost:8000",
       },
       log_file: "logs/web.log",
       error_file: "logs/web.error.log",

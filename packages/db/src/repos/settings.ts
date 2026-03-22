@@ -33,16 +33,34 @@ export class SettingsRepo {
     return row?.value ?? null;
   }
 
-  set(key: string, value: string): void {
+  set(key: string, value: string | null): void {
+    if (!value) {
+      this.sqlite.prepare("DELETE FROM app_settings WHERE key = ?").run(key);
+      return;
+    }
     this.sqlite.prepare(
       "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
     ).run(key, value);
   }
 
   getScrapeSchedule(): { hour: number; minute: number } {
-    const hour = parseInt(this.get("scrape_hour") ?? "6", 10);
-    const minute = parseInt(this.get("scrape_minute") ?? "0", 10);
-    return { hour, minute };
+    const hourRaw = this.get("scrape_hour");
+    const minuteRaw = this.get("scrape_minute");
+    const hour = hourRaw ? parseInt(hourRaw, 10) : 6;
+    const minute = minuteRaw ? parseInt(minuteRaw, 10) : 0;
+    return {
+      hour: isNaN(hour) ? 6 : hour,
+      minute: isNaN(minute) ? 0 : minute,
+    };
+  }
+
+  private getUpdatedAt(keys: string[]): number | null {
+    if (keys.length === 0) return null;
+    const rows = this.sqlite
+      .prepare(`SELECT updated_at FROM app_settings WHERE key IN (${keys.map(() => "?").join(", ")})`)
+      .all(...keys) as { updated_at: number | null }[];
+    const values = rows.map(r => r.updated_at).filter((v): v is number => v !== null);
+    return values.length > 0 ? Math.max(...values) : null;
   }
 
   setScrapeSchedule(hour: number, minute: number): void {
@@ -65,6 +83,11 @@ export class SettingsRepo {
     discordChannelId: string;
     scrapeSchedule: { hour: number; minute: number };
     secrets: Record<SecretSettingKey, { isSet: boolean; masked: string | null }>;
+    updatedAt: {
+      scrapeSchedule: number | null;
+      secrets: number | null;
+      discordChannelId: number | null;
+    };
   } {
     const secrets = {} as Record<SecretSettingKey, { isSet: boolean; masked: string | null }>;
     for (const key of SECRET_SETTING_KEYS) {
@@ -74,6 +97,11 @@ export class SettingsRepo {
       discordChannelId: this.get("discord_channel_id") ?? "",
       scrapeSchedule: this.getScrapeSchedule(),
       secrets,
+      updatedAt: {
+        scrapeSchedule: this.getUpdatedAt(["scrape_hour", "scrape_minute"]),
+        secrets: this.getUpdatedAt([...SECRET_SETTING_KEYS]),
+        discordChannelId: this.getUpdatedAt(["discord_channel_id"]),
+      },
     };
   }
 }

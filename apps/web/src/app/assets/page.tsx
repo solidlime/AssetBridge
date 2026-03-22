@@ -19,6 +19,7 @@ type Holding = {
   costBasisJpy: number;
   costPerUnitJpy: number;
   currentPriceJpy?: number;
+  currentPriceNative?: number | null;
   unrealizedPnlJpy: number;
   unrealizedPnlPct: number;
   assetType: string;
@@ -30,7 +31,7 @@ type Holding = {
   institutionName?: string;
 };
 
-type SortKey = "name" | "quantity" | "valueJpy" | "unrealizedPnlJpy" | "unrealizedPnlPct" | "costPerUnitJpy" | "costBasisJpy" | "portfolioWeightPct" | "priceJpy" | "valueDiffJpy" | "priceDiffPct";
+type SortKey = "name" | "quantity" | "valueJpy" | "unrealizedPnlJpy" | "unrealizedPnlPct" | "costPerUnitJpy" | "costBasisJpy" | "portfolioWeightPct" | "priceJpy" | "valueDiffJpy" | "priceDiffPct" | "currentPriceJpy";
 type SortDir = "asc" | "desc";
 
 // ---------------------------------------------------------------------------
@@ -293,9 +294,9 @@ function AssetsPageInner() {
         av = a.name;
         bv = b.name;
       } else {
-        av = a[sortKey];
-        bv = b[sortKey];
-      }
+          av = a[sortKey] ?? null;
+          bv = b[sortKey] ?? null;
+        }
 
       if (av === null && bv === null) return 0;
       if (av === null) return 1;
@@ -388,7 +389,7 @@ function AssetsPageInner() {
                 <SortHeader label="銘柄" sortKeyTarget="name" align="left" />
                 <SortHeader label="数量" sortKeyTarget="quantity" />
                 <SortHeader label="取得単価" sortKeyTarget="costPerUnitJpy" />
-                <th style={{ textAlign: "right", padding: "8px 0", whiteSpace: "nowrap" }}>現在値</th>
+                <SortHeader label="現在値" sortKeyTarget="currentPriceJpy" />
                 <SortHeader label="評価額" sortKeyTarget="valueJpy" />
                 <SortHeader label="損益" sortKeyTarget="unrealizedPnlJpy" />
                 <SortHeader label="損益率" sortKeyTarget="unrealizedPnlPct" />
@@ -444,9 +445,11 @@ function AssetsPageInner() {
                        {(h.assetType === 'CASH' || h.assetType === 'PENSION' || h.assetType === 'POINT' ||
                          h.assetType === 'cash' || h.assetType === 'pension' || h.assetType === 'point')
                          ? '—'
-                         : h.currentPriceJpy != null
-                           ? formatJpy(h.currentPriceJpy)
-                           : '—'}
+                         : h.currentPriceNative != null && h.currency === 'USD'
+                           ? `$${h.currentPriceNative.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                           : h.currentPriceJpy != null
+                             ? formatJpy(h.currentPriceJpy)
+                             : '—'}
                      </td>
                     <td style={{ textAlign: "right", padding: "10px 0" }}>{formatJpy(h.valueJpy)}</td>
                     <td style={{ textAlign: "right", padding: "10px 0", color: pnlColor }}>

@@ -27,6 +27,7 @@
     "packages/*"
   ],
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
     "tsx": "^4.21.0",
     "yahoo-finance2": "^3.13.2"
   },

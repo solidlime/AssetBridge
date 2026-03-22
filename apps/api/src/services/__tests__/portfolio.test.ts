@@ -83,6 +83,7 @@ function makeRow(overrides: {
   dividendRate?: number | null;
   nextExDividendDate?: string | null;
   currentPriceJpy?: number | null;
+  currentPriceNative?: number | null;
 }) {
   return {
     portfolio_snapshots: {
@@ -99,6 +100,7 @@ function makeRow(overrides: {
       dividendRate: overrides.dividendRate ?? null,
       nextExDividendDate: overrides.nextExDividendDate ?? null,
       currentPriceJpy: overrides.currentPriceJpy ?? null,
+      currentPriceNative: overrides.currentPriceNative ?? null,
     },
     assets: {
       symbol: overrides.symbol ?? "AAPL",

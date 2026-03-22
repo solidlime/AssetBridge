@@ -13,6 +13,7 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 interface DividendCacheValue {
   months: string | null;
   annualJpy: number | null;
+  perPaymentJpy: number | null;
   isUnknown: boolean;
 }
 
@@ -57,6 +58,7 @@ async function ensureCacheLoaded(): Promise<void> {
       {
         months: r.months ?? null,
         annualJpy: r.annualJpy ?? null,
+        perPaymentJpy: r.perPaymentJpy ?? null,
         isUnknown: !!r.isUnknown,
       },
     ])

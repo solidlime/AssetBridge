@@ -17,6 +17,11 @@ const nextConfig: NextConfig = {
           destination: "/withdrawals",
           permanent: true,
         },
+        {
+          source: "/income-expense",
+          destination: "/",
+          permanent: true,
+        },
       ];
     },
   }),

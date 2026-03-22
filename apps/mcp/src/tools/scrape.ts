@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { trpc } from "../trpc-client";
+import { logMcp } from "../lib/logger";
 
 export function registerScrapeTools(server: McpServer): void {
   server.tool(
@@ -9,8 +10,10 @@ export function registerScrapeTools(server: McpServer): void {
     async () => {
       try {
         const data = await trpc.scrape.trigger.mutate();
+        logMcp("info", "trigger_scrape: スクレイプジョブをキューに積んだ", data);
         return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
       } catch (e) {
+        logMcp("error", "trigger_scrape: エラー", { error: e instanceof Error ? e.message : String(e) });
         return { content: [{ type: "text", text: `Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
       }
     }
@@ -25,6 +28,7 @@ export function registerScrapeTools(server: McpServer): void {
         const data = await trpc.scrape.status.query();
         return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
       } catch (e) {
+        logMcp("error", "get_scrape_status: エラー", { error: e instanceof Error ? e.message : String(e) });
         return { content: [{ type: "text", text: `Error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
       }
     }

@@ -11,6 +11,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@trpc/client": "^11.0.0",
     "@assetbridge/api": "workspace:*",
+    "@assetbridge/db": "workspace:*",
     "@assetbridge/types": "workspace:*",
     "zod": "^3.22.0",
     "dotenv": "^16.0.0"

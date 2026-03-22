@@ -6,6 +6,7 @@ export const dividendData = sqliteTable("dividend_data", {
   ticker: text("ticker").notNull().unique(),
   months: text("months"),
   annualJpy: real("annual_jpy"),
+  perPaymentJpy: real("per_payment_jpy"),
   isUnknown: integer("is_unknown", { mode: "boolean" }).default(false),
   scrapedAt: text("scraped_at").default(sql`(datetime('now'))`),
 });

@@ -12,6 +12,8 @@ import {
   deleteFixedExpense,
   getMonthlyWithdrawalSummary,
   getCreditCardDetails,
+  getMonthlyCashflow,
+  getWithdrawalAccountSummary,
 } from "../services/income_expense";
 
 export const incomeExpenseRouter = router({
@@ -44,6 +46,7 @@ export const incomeExpenseRouter = router({
         withdrawalMonth: z.number().int().min(1).max(12).nullable().optional(),
         category: z.string().nullable().optional(),
         assetId: z.number().int().nullable().optional(),
+        bankAccount: z.string().nullable().optional(),
       })
     )
     .mutation(({ input }) => addFixedExpense(input)),
@@ -59,6 +62,7 @@ export const incomeExpenseRouter = router({
         withdrawalMonth: z.number().int().min(1).max(12).nullable().optional(),
         category: z.string().nullable().optional(),
         assetId: z.number().int().nullable().optional(),
+        bankAccount: z.string().nullable().optional(),
       })
     )
     .mutation(({ input }) => {
@@ -77,4 +81,10 @@ export const incomeExpenseRouter = router({
 
   // ── クレジットカード詳細 ──────────────────────────────────────────────────
   getCreditCardDetails: proc.query(() => getCreditCardDetails()),
+
+  monthlyCashflow: proc
+    .input(z.object({ months: z.number().int().min(1).max(24).default(6) }))
+    .query(({ input }) => getMonthlyCashflow(input.months)),
+
+  getWithdrawalAccountSummary: proc.query(() => getWithdrawalAccountSummary()),
 });

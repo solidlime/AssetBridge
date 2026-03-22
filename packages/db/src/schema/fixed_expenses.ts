@@ -10,6 +10,7 @@ export const fixedExpenses = sqliteTable("fixed_expenses", {
   withdrawalMonth: integer("withdrawal_month"),
   category: text("category"),
   assetId: integer("asset_id"),
+  bankAccount: text("bank_account"),
   createdAt: text("created_at").default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").default(sql`(datetime('now'))`),
 });
