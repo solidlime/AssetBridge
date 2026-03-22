@@ -172,24 +172,9 @@ export default function SimulatorPage() {
             </div>
           ))}
         </div>
-        <button
-          onClick={run}
-          disabled={loading}
-          aria-label="シミュレーション実行"
-          style={{
-            marginTop: 16,
-            background: loading ? "#475569" : "#3b82f6",
-            color: "white",
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 24px",
-            cursor: loading ? "not-allowed" : "pointer",
-            fontSize: 14,
-            fontWeight: 600,
-          }}
-        >
-          {loading ? "計算中..." : "シミュレーション実行"}
-        </button>
+        <p style={{ color: "#94a3b8", fontSize: 12, textAlign: "center", marginTop: 8 }}>
+          ※ パラメータ変更時に自動実行されます
+        </p>
       </div>
 
       {/* 結果グラフ + サマリー */}

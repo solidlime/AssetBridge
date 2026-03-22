@@ -11,9 +11,9 @@ services:
       - "8000:8000"  # API Server (Hono + tRPC)
       - "8001:8001"  # MCP Server
     volumes:
-      # Persist SQLite database
+      # SQLite DB (assetbridge_v2.db) + スナップショット — バックアップ必須
       - ./data:/app/data
-      # Persist logs
+      # PM2 アプリログ (api/web/mcp/worker/discord) — 任意
       - ./logs:/app/logs
     env_file:
       - .env

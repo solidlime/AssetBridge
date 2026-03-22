@@ -163,10 +163,177 @@ export function DashboardClient({
 
   const sign = diffJpy >= 0 ? "+" : "";
 
+  // ─── カテゴリ定義 ──────────────────────────────────────────────────────
+
+  const cats: Array<{
+    name: string;
+    valueKey: string;
+    diffJpy: number | null | undefined;
+    diffPct: number | null | undefined;
+  }> = [
+    {
+      name: "日本株",
+      valueKey: "stockJpJpy",
+      diffJpy: snapshot?.stockJpPrevDiffJpy,
+      diffPct: snapshot?.stockJpPrevDiffPct,
+    },
+    {
+      name: "米国株",
+      valueKey: "stockUsJpy",
+      diffJpy: snapshot?.stockUsPrevDiffJpy,
+      diffPct: snapshot?.stockUsPrevDiffPct,
+    },
+    {
+      name: "投資信託",
+      valueKey: "fundJpy",
+      diffJpy: snapshot?.fundPrevDiffJpy,
+      diffPct: snapshot?.fundPrevDiffPct,
+    },
+    {
+      name: "現金",
+      valueKey: "cashJpy",
+      diffJpy: snapshot?.cashPrevDiffJpy,
+      diffPct: snapshot?.cashPrevDiffPct,
+    },
+    {
+      name: "年金",
+      valueKey: "pensionJpy",
+      diffJpy: snapshot?.pensionPrevDiffJpy,
+      diffPct: snapshot?.pensionPrevDiffPct,
+    },
+    {
+      name: "ポイント",
+      valueKey: "pointJpy",
+      diffJpy: snapshot?.pointPrevDiffJpy,
+      diffPct: snapshot?.pointPrevDiffPct,
+    },
+  ];
+
   // ─── ブロック定義 ──────────────────────────────────────────────────────
 
   const renderBlock = (id: string) => {
     switch (id) {
+      // 総資産カード + カテゴリカード
+      case "asset-summary":
+        return (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: 16,
+              marginBottom: 24,
+            }}
+          >
+            <div
+              style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}
+            >
+              <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
+                総資産
+              </div>
+              <div style={{ fontSize: 28, fontWeight: 700 }}>
+                {formatJpy(snapshot?.totalJpy ?? 0)}
+              </div>
+              <div
+                style={{
+                  fontSize: 14,
+                  color: diffColor(diffJpy),
+                  marginTop: 4,
+                }}
+              >
+                {sign}
+                {formatJpy(Math.abs(diffJpy))} ({formatPct(diffPct)})
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 16,
+                  marginTop: 6,
+                  fontSize: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{ color: "#64748b" }}>
+                  前月比:{" "}
+                  <span
+                    style={{
+                      color:
+                        snapshot?.prevMonthDiffJpy != null
+                          ? diffColor(snapshot.prevMonthDiffJpy)
+                          : "#64748b",
+                    }}
+                  >
+                    {fmtDiffPct(snapshot?.prevMonthDiffPct)}
+                  </span>
+                </span>
+                <span style={{ color: "#64748b" }}>
+                  前年比:{" "}
+                  <span
+                    style={{
+                      color:
+                        snapshot?.prevYearDiffJpy != null
+                          ? diffColor(snapshot.prevYearDiffJpy)
+                          : "#64748b",
+                    }}
+                  >
+                    {fmtDiffPct(snapshot?.prevYearDiffPct)}
+                  </span>
+                </span>
+              </div>
+            </div>
+
+            {/* カテゴリ別内訳 */}
+            {snapshot?.breakdown &&
+              cats.map(({ name, valueKey, diffJpy: catDiffJpy, diffPct: catDiffPct }) => {
+                const value =
+                  (snapshot.breakdown as Record<string, number>)[valueKey] ?? 0;
+                const catSign = (catDiffJpy ?? 0) >= 0 ? "+" : "";
+                const catDiffColor =
+                  catDiffJpy == null
+                    ? "#64748b"
+                    : catDiffJpy >= 0
+                    ? "#4ade80"
+                    : "#f87171";
+                return (
+                  <div
+                    key={name}
+                    style={{
+                      background: "#1e293b",
+                      borderRadius: 12,
+                      padding: 24,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "#94a3b8",
+                        marginBottom: 8,
+                      }}
+                    >
+                      {name}
+                    </div>
+                    <div style={{ fontSize: 20, fontWeight: 700 }}>
+                      {formatJpy(value)}
+                    </div>
+                    {catDiffJpy != null && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: catDiffColor,
+                          marginTop: 4,
+                        }}
+                      >
+                        {catSign}
+                        {formatJpy(Math.abs(catDiffJpy))}
+                        {catDiffPct != null &&
+                          ` / ${catSign}${Math.abs(catDiffPct).toFixed(1)}%`}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        );
+
       // 資産推移グラフ
       case "asset-history":
         return (
@@ -668,177 +835,13 @@ export function DashboardClient({
     }
   };
 
-  // ─── 総資産カード（固定ヘッダー、ドラッグ対象外） ─────────────────────
-
-  const cats: Array<{
-    name: string;
-    valueKey: string;
-    diffJpy: number | null | undefined;
-    diffPct: number | null | undefined;
-  }> = [
-    {
-      name: "日本株",
-      valueKey: "stockJpJpy",
-      diffJpy: snapshot?.stockJpPrevDiffJpy,
-      diffPct: snapshot?.stockJpPrevDiffPct,
-    },
-    {
-      name: "米国株",
-      valueKey: "stockUsJpy",
-      diffJpy: snapshot?.stockUsPrevDiffJpy,
-      diffPct: snapshot?.stockUsPrevDiffPct,
-    },
-    {
-      name: "投資信託",
-      valueKey: "fundJpy",
-      diffJpy: snapshot?.fundPrevDiffJpy,
-      diffPct: snapshot?.fundPrevDiffPct,
-    },
-    {
-      name: "現金",
-      valueKey: "cashJpy",
-      diffJpy: snapshot?.cashPrevDiffJpy,
-      diffPct: snapshot?.cashPrevDiffPct,
-    },
-    {
-      name: "年金",
-      valueKey: "pensionJpy",
-      diffJpy: snapshot?.pensionPrevDiffJpy,
-      diffPct: snapshot?.pensionPrevDiffPct,
-    },
-    {
-      name: "ポイント",
-      valueKey: "pointJpy",
-      diffJpy: snapshot?.pointPrevDiffJpy,
-      diffPct: snapshot?.pointPrevDiffPct,
-    },
-  ];
-
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>
         ダッシュボード
       </h1>
 
-      {/* 総資産カード（固定 - ドラッグ対象外） */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: 16,
-          marginBottom: 32,
-        }}
-      >
-        <div
-          style={{ background: "#1e293b", borderRadius: 12, padding: 24 }}
-        >
-          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>
-            総資産
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 700 }}>
-            {formatJpy(snapshot?.totalJpy ?? 0)}
-          </div>
-          <div
-            style={{
-              fontSize: 14,
-              color: diffColor(diffJpy),
-              marginTop: 4,
-            }}
-          >
-            {sign}
-            {formatJpy(Math.abs(diffJpy))} ({formatPct(diffPct)})
-          </div>
-          <div
-            style={{
-              display: "flex",
-              gap: 16,
-              marginTop: 6,
-              fontSize: 12,
-              flexWrap: "wrap",
-            }}
-          >
-            <span style={{ color: "#64748b" }}>
-              前月比:{" "}
-              <span
-                style={{
-                  color:
-                    snapshot?.prevMonthDiffJpy != null
-                      ? diffColor(snapshot.prevMonthDiffJpy)
-                      : "#64748b",
-                }}
-              >
-                {fmtDiffPct(snapshot?.prevMonthDiffPct)}
-              </span>
-            </span>
-            <span style={{ color: "#64748b" }}>
-              前年比:{" "}
-              <span
-                style={{
-                  color:
-                    snapshot?.prevYearDiffJpy != null
-                      ? diffColor(snapshot.prevYearDiffJpy)
-                      : "#64748b",
-                }}
-              >
-                {fmtDiffPct(snapshot?.prevYearDiffPct)}
-              </span>
-            </span>
-          </div>
-        </div>
-
-        {/* カテゴリ別内訳 */}
-        {snapshot?.breakdown &&
-          cats.map(({ name, valueKey, diffJpy: catDiffJpy, diffPct: catDiffPct }) => {
-            const value =
-              (snapshot.breakdown as Record<string, number>)[valueKey] ?? 0;
-            const catSign = (catDiffJpy ?? 0) >= 0 ? "+" : "";
-            const catDiffColor =
-              catDiffJpy == null
-                ? "#64748b"
-                : catDiffJpy >= 0
-                ? "#4ade80"
-                : "#f87171";
-            return (
-              <div
-                key={name}
-                style={{
-                  background: "#1e293b",
-                  borderRadius: 12,
-                  padding: 24,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: "#94a3b8",
-                    marginBottom: 8,
-                  }}
-                >
-                  {name}
-                </div>
-                <div style={{ fontSize: 20, fontWeight: 700 }}>
-                  {formatJpy(value)}
-                </div>
-                {catDiffJpy != null && (
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: catDiffColor,
-                      marginTop: 4,
-                    }}
-                  >
-                    {catSign}
-                    {formatJpy(Math.abs(catDiffJpy))}
-                    {catDiffPct != null &&
-                      ` / ${catSign}${Math.abs(catDiffPct).toFixed(1)}%`}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-      </div>
-
-      {/* ドラッグ可能なブロック群 */}
+      {/* ドラッグ可能なブロック群（総資産カードを含む） */}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}

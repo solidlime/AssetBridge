@@ -7,6 +7,7 @@ const STORAGE_KEY = "assetbridge-dashboard-layout";
 
 // デフォルト順序（ブロックID）
 const DEFAULT_ORDER = [
+  "asset-summary",      // 総資産カード + カテゴリカード
   "asset-history",
   "category-allocation",
   "monthly-expense",
@@ -23,7 +24,21 @@ export function useDashboardLayout() {
           : null;
       if (saved) {
         const parsed = JSON.parse(saved) as string[];
-        // 新しいブロックIDが追加された場合も対応
+        
+        // 既存レイアウトに asset-summary がなければ先頭に追加（後方互換）
+        if (!parsed.includes("asset-summary")) {
+          const merged = [
+            "asset-summary",
+            ...parsed.filter((id) => DEFAULT_ORDER.includes(id)),
+          ];
+          // 新しいブロックIDが追加された場合も対応
+          DEFAULT_ORDER.forEach((id) => {
+            if (!merged.includes(id)) merged.push(id);
+          });
+          return merged;
+        }
+        
+        // asset-summary が既に含まれている場合は通常のマージ処理
         const merged = [
           ...parsed.filter((id) => DEFAULT_ORDER.includes(id)),
         ];

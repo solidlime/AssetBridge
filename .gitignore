@@ -53,6 +53,17 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local IDE / tool settings
+settings.local.json
+*.local.json
+
+# Lock files (pnpm使用のためbunは不要)
+bun.lock
+
+# Test snapshots (auto-generated)
+tests/**/*.json
+!tests/e2e/**/*.spec.ts
+
 # Playwright
 playwright-report/
 test-results/

@@ -154,7 +154,22 @@ cp .env.example .env
 
 **重要**: `.env` ファイルは Git 管理外です。機密情報を直接記入してください。
 
+### 事前準備（初回のみ）
+
+```bash
+# 永続化ディレクトリをホスト側に作成
+mkdir -p data logs
+```
+
+| パス | 内容 | バックアップ |
+|------|------|------|
+| `data/assetbridge_v2.db` | メインDB（資産・設定・ログ全て） | 🔴 必須 |
+| `data/snapshots/` | ポートフォリオスナップショット | 🟡 推奨 |
+| `logs/` | PM2アプリログ | 🟢 任意 |
+
 ### 2. Docker イメージをビルドして起動
+
+#### オプション A: ローカルでビルドする場合
 
 ```bash
 # ビルド & バックグラウンド起動
@@ -166,6 +181,24 @@ docker compose logs -f
 # 特定サービスのログのみ確認
 docker compose logs -f assetbridge
 ```
+
+#### オプション B: GitHub Container Registry から取得する場合
+
+```bash
+# 最新イメージを取得
+docker pull ghcr.io/solidlime/assetbridge:latest
+
+# docker-compose.yml の build: . を以下に変更
+# image: ghcr.io/solidlime/assetbridge:latest
+
+# 起動
+docker compose up -d
+
+# ログをリアルタイム確認
+docker compose logs -f
+```
+
+**メリット**: ビルド時間を節約でき、GitHub Actions で自動ビルドされたイメージを即座に利用できます。
 
 ### 3. サービスにアクセス
 

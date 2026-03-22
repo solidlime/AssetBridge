@@ -59,11 +59,14 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Copy built artifacts from builder
-COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps ./apps
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/pnpm-workspace.yaml ./
+COPY --from=builder /app/pnpm-lock.yaml ./
+
+# Install production dependencies only (devDependencies を除外)
+RUN pnpm install --prod --frozen-lockfile 2>/dev/null || pnpm install --prod
 
 # Copy PM2 ecosystem configs (Docker version and original)
 COPY ecosystem.config.cjs ./
