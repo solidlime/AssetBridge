@@ -48,6 +48,9 @@ interface MonthlyWithdrawalSummary {
   linkedAssetIds: number[];
 }
 
+// インライン編集セルの識別子
+type EditingCell = { id: number; field: string } | null;
+
 interface AccountWithdrawalSummary {
   accountId: number;
   accountName: string;
@@ -107,16 +110,6 @@ function formatFrequency(freq: string): string {
   return freq;
 }
 
-type WarningLevel = "urgent" | "danger" | "caution";
-
-interface WarningInfo {
-  cardName: string;
-  level: WarningLevel;
-  message: string;
-  shortfallJpy: number;
-  daysUntil: number;
-}
-
 // JST（Asia/Tokyo）で「今日から target 日まで何日か」を計算
 function daysUntilJst(dateStr: string): number {
   const nowJst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
@@ -125,6 +118,24 @@ function daysUntilJst(dateStr: string): number {
   const diffMs = target.getTime() - todayJst.getTime();
   return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 }
+
+// 月/日 形式にフォーマット（例: "3/26"）
+function formatMonthDay(dateStr: string): string {
+  const d = new Date(dateStr);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+// 編集用インプットの共通スタイル
+const editInputStyle: React.CSSProperties = {
+  background: "#0f172a",
+  color: "#e2e8f0",
+  border: "1px solid #3b82f6",
+  borderRadius: 6,
+  padding: "4px 8px",
+  fontSize: 13,
+  width: "100%",
+  outline: "none",
+};
 
 // ── ページコンポーネント ─────────────────────────────────────────────────────
 
@@ -137,6 +148,10 @@ export default function WithdrawalsPage() {
   const [isSavingMapping, setIsSavingMapping] = useState(false);
   const [mapSaveMessage, setMapSaveMessage] = useState<{ text: string; ok: boolean } | null>(null);
   const [showFixedExpenseForm, setShowFixedExpenseForm] = useState(false);
+
+  // インライン編集ステート
+  const [editingCell, setEditingCell] = useState<EditingCell>(null);
+  const [editValue, setEditValue] = useState<string>("");
 
   // ── クエリ ──────────────────────────────────────────────────────────────
 
@@ -190,15 +205,28 @@ export default function WithdrawalsPage() {
     },
   });
 
+  const updateFixedMutation = useMutation({
+    mutationFn: (input: {
+      id: number;
+      name?: string;
+      amountJpy?: number;
+      frequency?: "monthly" | "annual" | "quarterly";
+      withdrawalDay?: number | null;
+      category?: string | null;
+      assetId?: number | null;
+    }) => trpc.incomeExpense.updateFixedExpense.mutate(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["getFixedExpenses"] });
+      queryClient.invalidateQueries({ queryKey: ["getMonthlyWithdrawalSummary"] });
+      queryClient.invalidateQueries({ queryKey: ["getWithdrawalAccountSummary"] });
+    },
+  });
+
   // ── 派生値 ──────────────────────────────────────────────────────────────
 
   const withdrawalRows: WithdrawalSummaryRow[] = balanceStatus?.summary ?? [];
   const accounts: Account[] = accountMapping?.accounts ?? [];
   const effectiveMapping = localMapping ?? accountMapping?.mapping ?? {};
-
-  const accountBalanceMap = new Map<number, number>(
-    accounts.map((a) => [a.assetId, a.balanceJpy])
-  );
 
   const cardDetailsMap = new Map<string, CreditCardDetail>(
     (creditCardDetails as CreditCardDetail[] | undefined ?? []).map((d) => [d.cardName, d])
@@ -212,47 +240,87 @@ export default function WithdrawalsPage() {
     balanceJpy: a.balanceJpy,
   }));
 
-  // 残高警告リスト（引き落とし日が近いもの・残高不足のもの）
-  const warnings = useMemo<WarningInfo[]>(() => {
-    if (!balanceStatus?.summary) return [];
-    const result: WarningInfo[] = [];
-    for (const item of balanceStatus.summary) {
-      const days = daysUntilJst(item.withdrawalDate);
-      if (days < 0) continue; // 過去の引き落としは無視
-
-      // 口座未紐づけは警告対象外（残高比較できない）
-      if (item.accountAssetId === null) continue;
-
-      const shortage = item.isInsufficient ? -item.shortfallJpy : 0;
-
-      if (days <= 3 && item.isInsufficient) {
-        result.push({
-          cardName: item.cardName,
-          level: "urgent",
-          message: `🚨 緊急！残高不足 ${formatJpy(shortage)} 不足`,
-          shortfallJpy: item.shortfallJpy,
-          daysUntil: days,
+  // 口座ベースの残高不足警告（shortfallJpy < 0 の口座を引き落とし日近い順に表示）
+  const accountWarnings = useMemo(() => {
+    if (!accountSummaryData) return [];
+    return (accountSummaryData as AccountWithdrawalSummary[])
+      .filter((a) => a.shortfallJpy < 0 && a.nextWithdrawalDate != null)
+      .map((a) => {
+        const days = daysUntilJst(a.nextWithdrawalDate!);
+        const shortage = Math.abs(a.shortfallJpy);
+        const dateStr = new Date(a.nextWithdrawalDate!).toLocaleDateString("ja-JP", {
+          month: "numeric",
+          day: "numeric",
+          timeZone: "Asia/Tokyo",
         });
-      } else if (days <= 7 && item.isInsufficient) {
-        result.push({
-          cardName: item.cardName,
-          level: "danger",
-          message: `🔴 残高不足！ ${formatJpy(shortage)} 不足`,
-          shortfallJpy: item.shortfallJpy,
-          daysUntil: days,
-        });
-      } else if (days <= 3 && !item.isInsufficient) {
-        result.push({
-          cardName: item.cardName,
-          level: "caution",
-          message: "⚠️ まもなく引き落とし（残高OK）",
-          shortfallJpy: item.shortfallJpy,
-          daysUntil: days,
-        });
-      }
+        const level = days <= 3 ? "urgent" : "danger";
+        return {
+          accountId: a.accountId,
+          accountName: a.accountName,
+          institutionName: a.institutionName,
+          shortage,
+          days,
+          dateStr,
+          level,
+          nextWithdrawalDate: a.nextWithdrawalDate,
+        };
+      })
+      .filter((a) => a.days >= 0) // 過去の引き落としは除外
+      .sort((a, b) => a.days - b.days);
+  }, [accountSummaryData]);
+
+  // クレカ引き落とし合計
+  const ccMonthlyTotal = useMemo(
+    () => withdrawalRows.reduce((sum, r) => sum + r.amountJpy, 0),
+    [withdrawalRows]
+  );
+
+  // ── インライン編集ハンドラー ─────────────────────────────────────────────
+
+  const handleCellDoubleClick = (id: number, field: string, currentValue: string) => {
+    setEditingCell({ id, field });
+    setEditValue(currentValue);
+  };
+
+  const handleCellSave = () => {
+    if (!editingCell) return;
+    const { id, field } = editingCell;
+
+    const payload: {
+      id: number;
+      name?: string;
+      amountJpy?: number;
+      frequency?: "monthly" | "annual" | "quarterly";
+      withdrawalDay?: number | null;
+      category?: string | null;
+    } = { id };
+
+    if (field === "name") {
+      payload.name = editValue;
+    } else if (field === "amount_jpy") {
+      const n = Number(editValue.replace(/[^0-9]/g, ""));
+      if (!isNaN(n) && n > 0) payload.amountJpy = n;
+    } else if (field === "frequency") {
+      payload.frequency = editValue as "monthly" | "annual" | "quarterly";
+    } else if (field === "withdrawal_day") {
+      payload.withdrawalDay = editValue ? Number(editValue) : null;
+    } else if (field === "category") {
+      payload.category = editValue || null;
     }
-    return result;
-  }, [balanceStatus]);
+
+    updateFixedMutation.mutate(payload);
+    setEditingCell(null);
+  };
+
+  const handleCellKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") handleCellSave();
+    else if (e.key === "Escape") setEditingCell(null);
+  };
+
+  const handleFixedAccountChange = (id: number, value: string) => {
+    const assetId = value ? Number(value) : null;
+    updateFixedMutation.mutate({ id, assetId });
+  };
 
   // ── ハンドラー ──────────────────────────────────────────────────────────
 
@@ -321,51 +389,86 @@ export default function WithdrawalsPage() {
 
   return (
     <div>
-      <style>{`@keyframes blink { 50% { opacity: 0; } }`}</style>
-      {warnings.length > 0 && (
+      {/* ─── 1. 警告バナー（口座ベース・残高不足のみ） ──────────────────────── */}
+      {accountWarnings.length > 0 && (
         <div
           style={{
-            background: warnings.some((w) => w.level === "urgent" || w.level === "danger")
-              ? "#450a0a"
-              : "#422006",
-            border: `1px solid ${warnings.some((w) => w.level === "urgent" || w.level === "danger") ? "#f87171" : "#fb923c"}`,
-            borderRadius: 12,
-            padding: "14px 20px",
+            background: "#1a0a0a",
+            border: "1px solid #7f1d1d",
+            borderRadius: 8,
+            padding: 16,
             marginBottom: 24,
-            fontSize: 14,
           }}
         >
           <div style={{ fontWeight: 700, color: "#fca5a5", marginBottom: 8 }}>
-            ⚠️ 引き落とし警告（{warnings.length}件）
+            ⚠️ 残高不足の口座（{accountWarnings.length}件）
           </div>
-          <ul style={{ margin: 0, paddingLeft: 20, listStyle: "none" }}>
-            {warnings.map((w) => (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+            {accountWarnings.map((w) => (
               <li
-                key={w.cardName}
-                style={{
-                  marginBottom: 4,
-                  color: w.level === "caution" ? "#fde68a" : "#fca5a5",
-                }}
+                key={w.accountId}
+                style={{ color: w.level === "urgent" ? "#f87171" : "#fca5a5", fontSize: 14 }}
               >
-                <strong>{w.cardName}</strong>：{w.message}
-                {w.daysUntil === 0 ? "（本日！）" : `（${w.daysUntil}日後）`}
+                {w.level === "urgent" ? "🚨" : "🔴"}{" "}
+                <strong>
+                  {w.accountName}
+                  {w.institutionName ? `（${w.institutionName}）` : ""}
+                </strong>{" "}
+                ¥{w.shortage.toLocaleString()} 不足 — 引き落とし日: {w.dateStr}
+                （{w.days === 0 ? "本日！" : `${w.days}日後`}）
               </li>
             ))}
           </ul>
-          <a
-            href="#cc-section"
-            style={{ fontSize: 12, color: "#93c5fd", textDecoration: "underline", marginTop: 8, display: "inline-block" }}
-          >
-            詳細を見る ↓
-          </a>
         </div>
       )}
+
       {/* ヘッダー */}
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>🏦 引き落とし管理</h1>
 
-      {/* ─── 💰 口座別引き落とし合計サマリー ───────────────────────────────── */}
+      {/* ─── 2. 今月の支出サマリーカード（横並び3枚） ──────────────────────── */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gap: 16,
+          marginBottom: 32,
+        }}
+      >
+        <div style={{ background: "#1e293b", borderRadius: 12, padding: 20 }}>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>💳 クレカ引き落とし合計</div>
+          <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "monospace", color: "#f87171" }}>
+            {formatJpy(summary?.creditCardTotal ?? 0)}
+          </div>
+          <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>当月予定</div>
+        </div>
+
+        <div style={{ background: "#1e293b", borderRadius: 12, padding: 20 }}>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>🏠 固定費合計（月次換算）</div>
+          <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "monospace", color: "#fbbf24" }}>
+            {formatJpy(summary?.fixedExpenseTotal ?? 0)}
+          </div>
+          <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>{summaryMonth}</div>
+        </div>
+
+        <div
+          style={{
+            background: "#1e293b",
+            borderRadius: 12,
+            padding: 20,
+            borderLeft: "3px solid #3b82f6",
+          }}
+        >
+          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>📊 総支出予定</div>
+          <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "monospace", color: "#e2e8f0" }}>
+            {formatJpy(summary?.grandTotal ?? 0)}
+          </div>
+          <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>クレカ + 固定費</div>
+        </div>
+      </div>
+
+      {/* ─── 3. 口座別引き落とし合計サマリー ────────────────────────────────── */}
       {accountSummaryData && accountSummaryData.length > 0 && (
-        <div style={{ ...cardStyle, marginBottom: 24 }}>
+        <div id="account-summary" style={{ ...cardStyle, marginBottom: 24 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, marginTop: 0 }}>
             💰 口座別引き落とし総額サマリー
           </h2>
@@ -462,48 +565,7 @@ export default function WithdrawalsPage() {
         </div>
       )}
 
-      {/* 月次支出サマリーカード（横並び3枚） */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: 16,
-          marginBottom: 32,
-        }}
-      >
-        <div style={{ background: "#1e293b", borderRadius: 12, padding: 20 }}>
-          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>💳 クレカ引き落とし合計</div>
-          <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "monospace", color: "#f87171" }}>
-            {formatJpy(summary?.creditCardTotal ?? 0)}
-          </div>
-          <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>当月予定</div>
-        </div>
-
-        <div style={{ background: "#1e293b", borderRadius: 12, padding: 20 }}>
-          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>🏠 固定費合計（月次換算）</div>
-          <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "monospace", color: "#fbbf24" }}>
-            {formatJpy(summary?.fixedExpenseTotal ?? 0)}
-          </div>
-          <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>{summaryMonth}</div>
-        </div>
-
-        <div
-          style={{
-            background: "#1e293b",
-            borderRadius: 12,
-            padding: 20,
-            borderLeft: "3px solid #3b82f6",
-          }}
-        >
-          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>📊 総支出予定</div>
-          <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "monospace", color: "#e2e8f0" }}>
-            {formatJpy(summary?.grandTotal ?? 0)}
-          </div>
-          <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>クレカ + 固定費</div>
-        </div>
-      </div>
-
-      {/* ─── 💳 クレジットカードセクション ─────────────────────────────────── */}
+      {/* ─── 4. クレジットカードセクション ──────────────────────────────────── */}
       <div id="cc-section" style={cardStyle}>
         <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>💳 クレジットカード引き落とし</h2>
 
@@ -521,174 +583,108 @@ export default function WithdrawalsPage() {
           </div>
         )}
 
-        {mapSaveMessage && (
-          <div
-            role="status"
-            aria-live="polite"
-            style={{
-              background: mapSaveMessage.ok ? "#14532d" : "#450a0a",
-              border: `1px solid ${mapSaveMessage.ok ? "#4ade80" : "#f87171"}`,
-              borderRadius: 8,
-              padding: "10px 16px",
-              marginBottom: 16,
-              fontSize: 13,
-              color: mapSaveMessage.ok ? "#4ade80" : "#f87171",
-            }}
-          >
-            {mapSaveMessage.text}
-          </div>
-        )}
-
         {withdrawalRows.length === 0 ? (
           <p style={{ color: "#94a3b8", fontSize: 14, margin: 0 }}>
             引き落とし予定はありません。
           </p>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table
-              style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}
-              aria-label="クレジットカード引き落とし一覧"
-            >
-              <thead>
-                <tr>
-                  <th style={thStyle}>カード名</th>
-                  <th style={thStyle}>カード種別</th>
-                  <th style={thStyle}>下4桁</th>
-                  <th style={thStyle}>引き落とし日</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>引き落とし予定</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>負債総額</th>
-                  <th style={thStyle}>紐づけ口座</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>口座残高</th>
-                </tr>
-              </thead>
-              <tbody>
-                {withdrawalRows.map((row, idx) => {
-                  const detail = cardDetailsMap.get(row.cardName);
-                  const selectedId = effectiveMapping[row.cardName] ?? null;
-                  const balance =
-                    selectedId != null ? (accountBalanceMap.get(selectedId) ?? null) : null;
+          <>
+            <div style={{ overflowX: "auto" }}>
+              <table
+                style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}
+                aria-label="クレジットカード引き落とし一覧"
+              >
+                <thead>
+                  <tr>
+                    <th style={thStyle}>カード名</th>
+                    <th style={thStyle}>カード種別</th>
+                    <th style={thStyle}>下4桁</th>
+                    <th style={thStyle}>引き落とし日</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>引き落とし予定</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>負債総額</th>
+                    <th style={thStyle}>紐づけ口座</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {withdrawalRows.map((row, idx) => {
+                    const detail = cardDetailsMap.get(row.cardName);
+                    const selectedId = effectiveMapping[row.cardName] ?? null;
 
-                  return (
-                    <tr key={`${row.cardName}-${idx}`}>
-                      <td style={{ ...tdStyle, fontWeight: 500 }}>{row.cardName}</td>
-                      <td style={{ ...tdStyle, color: "#cbd5e1" }}>{detail?.cardType ?? "—"}</td>
-                      <td style={{ ...tdStyle, fontFamily: "monospace", color: "#cbd5e1" }}>
-                        {detail?.cardNumberLast4 ? `**** ${detail.cardNumberLast4}` : "—"}
-                      </td>
-                      <td style={{ ...tdStyle, color: "#cbd5e1" }}>
-                        {row.withdrawalDate}
-                        {(() => {
-                          const w = warnings.find((x) => x.cardName === row.cardName);
-                          if (!w) return null;
-                          const isUrgent = w.level === "urgent";
-                          const isDanger = w.level === "danger" || isUrgent;
-                          return (
-                            <span
-                              style={{
-                                display: "inline-block",
-                                marginLeft: 8,
-                                fontSize: 11,
-                                fontWeight: 700,
-                                padding: "2px 6px",
-                                borderRadius: 4,
-                                background: isDanger ? "#450a0a" : "#422006",
-                                color: isDanger ? "#fca5a5" : "#fde68a",
-                                border: `1px solid ${isDanger ? "#f87171" : "#fb923c"}`,
-                                animation: isUrgent ? "blink 1s step-start infinite" : "none",
-                              }}
-                            >
-                              {w.message}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontFamily: "monospace" }}>
-                        {formatJpy(row.amountJpy)}
-                      </td>
-                      <td
-                        style={{
-                          ...tdStyle,
-                          textAlign: "right",
-                          fontFamily: "monospace",
-                          color: detail ? "#f87171" : "#475569",
-                        }}
-                      >
-                        {detail ? formatJpy(detail.totalDebtJpy) : "—"}
-                      </td>
-                      <td style={tdStyle}>
-                        <select
-                          value={selectedId ?? ""}
-                          onChange={(e) => handleMappingChange(row.cardName, e.target.value)}
-                          style={selectStyle}
-                          aria-label={`${row.cardName} の紐づけ口座`}
+                    return (
+                      <tr key={`${row.cardName}-${idx}`}>
+                        <td style={{ ...tdStyle, fontWeight: 500 }}>{row.cardName}</td>
+                        <td style={{ ...tdStyle, color: "#cbd5e1" }}>{detail?.cardType ?? "—"}</td>
+                        <td style={{ ...tdStyle, fontFamily: "monospace", color: "#cbd5e1" }}>
+                          {detail?.cardNumberLast4 ? `**** ${detail.cardNumberLast4}` : "—"}
+                        </td>
+                        <td style={{ ...tdStyle, color: "#cbd5e1" }}>
+                          {row.withdrawalDate}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontFamily: "monospace" }}>
+                          {formatJpy(row.amountJpy)}
+                        </td>
+                        <td
+                          style={{
+                            ...tdStyle,
+                            textAlign: "right",
+                            fontFamily: "monospace",
+                            color: detail ? "#f87171" : "#475569",
+                          }}
                         >
-                          <option value="">口座を選択</option>
-                          {accounts.map((acc) => (
-                            <option key={acc.assetId} value={acc.assetId}>
-                              {acc.institutionName
-                                ? `${acc.institutionName} - ${acc.name}`
-                                : acc.name}（{formatJpy(acc.balanceJpy)}）
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td
-                        style={{
-                          ...tdStyle,
-                          textAlign: "right",
-                          fontFamily: "monospace",
-                          color: balance != null
-                            ? (balance < row.amountJpy ? "#f87171" : "#4ade80")
-                            : "#475569",
-                        }}
-                      >
-                        {balance != null ? (
-                          <>
-                            {formatJpy(balance)}
-                            <br />
-                            <span style={{
-                              fontSize: 11,
-                              color: balance >= row.amountJpy ? "#4ade80" : "#f87171",
-                            }}>
-                              {balance >= row.amountJpy
-                                ? `+${formatJpy(balance - row.amountJpy)}`
-                                : `-${formatJpy(row.amountJpy - balance)}`}
-                            </span>
-                          </>
-                        ) : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                          {detail ? formatJpy(detail.totalDebtJpy) : "—"}
+                        </td>
+                        <td style={tdStyle}>
+                          <select
+                            value={selectedId ?? ""}
+                            onChange={(e) => handleMappingChange(row.cardName, e.target.value)}
+                            style={selectStyle}
+                            aria-label={`${row.cardName} の紐づけ口座`}
+                          >
+                            <option value="">口座を選択</option>
+                            {accounts.map((acc) => (
+                              <option key={acc.assetId} value={acc.assetId}>
+                                {acc.institutionName
+                                  ? `${acc.institutionName} - ${acc.name}`
+                                  : acc.name}（{formatJpy(acc.balanceJpy)}）
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {/* 月次引き落とし合計行 */}
+            <div
+              style={{
+                marginTop: 12,
+                textAlign: "right",
+                fontSize: 14,
+                color: "#94a3b8",
+                borderTop: "1px solid #334155",
+                paddingTop: 12,
+              }}
+            >
+              今月の引き落とし合計：
+              <span
+                style={{
+                  fontFamily: "monospace",
+                  fontWeight: 700,
+                  color: "#f87171",
+                  marginLeft: 8,
+                  fontSize: 16,
+                }}
+              >
+                {formatJpy(ccMonthlyTotal)}
+              </span>
+            </div>
+          </>
         )}
-
-        <div style={{ marginTop: 16 }}>
-          <button
-            onClick={handleSaveMapping}
-            disabled={isSavingMapping}
-            aria-busy={isSavingMapping}
-            style={{
-              background: isSavingMapping ? "#334155" : "#2563eb",
-              color: "#fff",
-              border: "none",
-              borderRadius: 8,
-              padding: "8px 20px",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: isSavingMapping ? "not-allowed" : "pointer",
-              opacity: isSavingMapping ? 0.7 : 1,
-              transition: "background 0.15s",
-            }}
-          >
-            {isSavingMapping ? "保存中..." : "口座設定を保存"}
-          </button>
-        </div>
       </div>
 
-      {/* ─── 🏠 固定費セクション ─────────────────────────────────────────────── */}
+      {/* ─── 5. 固定費セクション ─────────────────────────────────────────────── */}
       <div style={cardStyle}>
         <div
           style={{
@@ -724,100 +720,258 @@ export default function WithdrawalsPage() {
             固定費が登録されていません。「固定費を追加」ボタンから登録できます。
           </p>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table
-              style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}
-              aria-label="固定費一覧"
-            >
-              <thead>
-                <tr>
-                  <th style={thStyle}>名称</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>金額</th>
-                  <th style={thStyle}>頻度</th>
-                  <th style={thStyle}>引き落とし日</th>
-                  <th style={thStyle}>カテゴリ</th>
-                  <th style={thStyle}>紐づけ口座</th>
-                  <th style={{ ...thStyle, textAlign: "center" }}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(fixedExpenses as FixedExpense[]).map((fe) => {
-                  const linkedAccount = accounts.find((a) => a.assetId === fe.assetId);
-                  return (
-                    <tr key={fe.id}>
-                      <td style={{ ...tdStyle, fontWeight: 500 }}>{fe.name}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontFamily: "monospace" }}>
-                        {formatJpy(fe.amountJpy)}
-                      </td>
-                      <td style={{ ...tdStyle, color: "#cbd5e1" }}>
-                        {formatFrequency(fe.frequency)}
-                      </td>
-                      <td style={{ ...tdStyle, color: "#cbd5e1" }}>
-                        {fe.withdrawalDay != null
-                          ? fe.withdrawalMonth != null
-                            ? `${fe.withdrawalMonth}月${fe.withdrawalDay}日`
-                            : `毎月${fe.withdrawalDay}日`
-                          : "—"}
-                      </td>
-                      <td style={{ ...tdStyle, color: "#cbd5e1" }}>{fe.category ?? "—"}</td>
-                      <td style={{ ...tdStyle, color: "#cbd5e1" }}>
-                        {linkedAccount
-                          ? linkedAccount.institutionName
-                            ? `${linkedAccount.institutionName} - ${linkedAccount.name}`
-                            : linkedAccount.name
-                          : "—"}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "center" }}>
-                        <button
-                          onClick={() => handleDeleteFixedExpense(fe.id, fe.name)}
-                          disabled={deleteMutation.isPending}
-                          style={{
-                            background: "transparent",
-                            color: "#f87171",
-                            border: "1px solid #f87171",
-                            borderRadius: 6,
-                            padding: "4px 10px",
-                            fontSize: 12,
-                            cursor: deleteMutation.isPending ? "not-allowed" : "pointer",
-                            opacity: deleteMutation.isPending ? 0.5 : 1,
-                          }}
-                          aria-label={`${fe.name} を削除`}
-                        >
-                          削除
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+          <>
+            <div style={{ overflowX: "auto" }}>
+              <p style={{ fontSize: 12, color: "#475569", marginBottom: 8, marginTop: 0 }}>
+                💡 各セルをダブルクリックで編集できます
+              </p>
+              <table
+                style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}
+                aria-label="固定費一覧"
+              >
+                <thead>
+                  <tr>
+                    <th style={thStyle}>名称</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>金額</th>
+                    <th style={thStyle}>頻度</th>
+                    <th style={thStyle}>引き落とし日</th>
+                    <th style={thStyle}>カテゴリ</th>
+                    <th style={thStyle}>紐づけ口座</th>
+                    <th style={{ ...thStyle, textAlign: "center" }}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(fixedExpenses as FixedExpense[]).map((fe) => {
+                    const isEditing = (field: string) =>
+                      editingCell?.id === fe.id && editingCell?.field === field;
 
-        {/* 月次換算合計 */}
-        {summary && summary.fixedExpenseTotal > 0 && (
-          <div
+                    return (
+                      <tr key={fe.id}>
+                        {/* 名称 */}
+                        <td
+                          style={{ ...tdStyle, fontWeight: 500, cursor: "default" }}
+                          onDoubleClick={() => handleCellDoubleClick(fe.id, "name", fe.name)}
+                          title="ダブルクリックで編集"
+                        >
+                          {isEditing("name") ? (
+                            <input
+                              autoFocus
+                              type="text"
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onBlur={handleCellSave}
+                              onKeyDown={handleCellKeyDown}
+                              style={editInputStyle}
+                            />
+                          ) : (
+                            fe.name
+                          )}
+                        </td>
+
+                        {/* 金額 */}
+                        <td
+                          style={{ ...tdStyle, textAlign: "right", fontFamily: "monospace", cursor: "default" }}
+                          onDoubleClick={() => handleCellDoubleClick(fe.id, "amount_jpy", String(fe.amountJpy))}
+                          title="ダブルクリックで編集"
+                        >
+                          {isEditing("amount_jpy") ? (
+                            <input
+                              autoFocus
+                              type="number"
+                              min={1}
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onBlur={handleCellSave}
+                              onKeyDown={handleCellKeyDown}
+                              style={{ ...editInputStyle, textAlign: "right" }}
+                            />
+                          ) : (
+                            formatJpy(fe.amountJpy)
+                          )}
+                        </td>
+
+                        {/* 頻度 */}
+                        <td
+                          style={{ ...tdStyle, color: "#cbd5e1", cursor: "default" }}
+                          onDoubleClick={() => handleCellDoubleClick(fe.id, "frequency", fe.frequency)}
+                          title="ダブルクリックで編集"
+                        >
+                          {isEditing("frequency") ? (
+                            <select
+                              autoFocus
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onBlur={handleCellSave}
+                              onKeyDown={handleCellKeyDown}
+                              style={editInputStyle}
+                            >
+                              <option value="monthly">毎月</option>
+                              <option value="quarterly">四半期</option>
+                              <option value="annual">年1回</option>
+                            </select>
+                          ) : (
+                            formatFrequency(fe.frequency)
+                          )}
+                        </td>
+
+                        {/* 引き落とし日 */}
+                        <td
+                          style={{ ...tdStyle, color: "#cbd5e1", cursor: "default" }}
+                          onDoubleClick={() =>
+                            handleCellDoubleClick(fe.id, "withdrawal_day", fe.withdrawalDay != null ? String(fe.withdrawalDay) : "")
+                          }
+                          title="ダブルクリックで編集"
+                        >
+                          {isEditing("withdrawal_day") ? (
+                            <input
+                              autoFocus
+                              type="number"
+                              min={1}
+                              max={31}
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onBlur={handleCellSave}
+                              onKeyDown={handleCellKeyDown}
+                              style={{ ...editInputStyle, width: 60 }}
+                            />
+                          ) : fe.withdrawalDay != null ? (
+                            fe.withdrawalMonth != null
+                              ? `${fe.withdrawalMonth}月${fe.withdrawalDay}日`
+                              : `毎月${fe.withdrawalDay}日`
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+
+                        {/* カテゴリ */}
+                        <td
+                          style={{ ...tdStyle, color: "#cbd5e1", cursor: "default" }}
+                          onDoubleClick={() => handleCellDoubleClick(fe.id, "category", fe.category ?? "")}
+                          title="ダブルクリックで編集"
+                        >
+                          {isEditing("category") ? (
+                            <select
+                              autoFocus
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              onBlur={handleCellSave}
+                              onKeyDown={handleCellKeyDown}
+                              style={editInputStyle}
+                            >
+                              <option value="">—</option>
+                              <option value="fixed">fixed</option>
+                              <option value="subscription">subscription</option>
+                              <option value="insurance">insurance</option>
+                              <option value="other">other</option>
+                            </select>
+                          ) : (
+                            fe.category ?? "—"
+                          )}
+                        </td>
+
+                        {/* 紐づけ口座（ドロップダウン・変更即時保存） */}
+                        <td style={tdStyle}>
+                          <select
+                            value={fe.assetId ?? ""}
+                            onChange={(e) => handleFixedAccountChange(fe.id, e.target.value)}
+                            style={{ ...selectStyle, minWidth: 160 }}
+                            aria-label={`${fe.name} の紐づけ口座`}
+                            disabled={updateFixedMutation.isPending}
+                          >
+                            <option value="">口座を選択</option>
+                            {accounts.map((acc) => (
+                              <option key={acc.assetId} value={acc.assetId}>
+                                {acc.institutionName
+                                  ? `${acc.institutionName} - ${acc.name}`
+                                  : acc.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+
+                        {/* 操作 */}
+                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                          <button
+                            onClick={() => handleDeleteFixedExpense(fe.id, fe.name)}
+                            disabled={deleteMutation.isPending}
+                            style={{
+                              background: "transparent",
+                              color: "#f87171",
+                              border: "1px solid #f87171",
+                              borderRadius: 6,
+                              padding: "4px 10px",
+                              fontSize: 12,
+                              cursor: deleteMutation.isPending ? "not-allowed" : "pointer",
+                              opacity: deleteMutation.isPending ? 0.5 : 1,
+                            }}
+                            aria-label={`${fe.name} を削除`}
+                          >
+                            削除
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 月次換算合計 */}
+            {summary && summary.fixedExpenseTotal > 0 && (
+              <div
+                style={{
+                  marginTop: 12,
+                  textAlign: "right",
+                  fontSize: 14,
+                  color: "#94a3b8",
+                  borderTop: "1px solid #334155",
+                  paddingTop: 12,
+                }}
+              >
+                月次換算合計：
+                <span
+                  style={{
+                    fontFamily: "monospace",
+                    fontWeight: 700,
+                    color: "#fbbf24",
+                    marginLeft: 8,
+                  }}
+                >
+                  {formatJpy(summary.fixedExpenseTotal)}
+                </span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ─── 6. 口座設定保存ボタン（ページ最下部） ──────────────────────────── */}
+      <div style={{ marginTop: 24, textAlign: "right" }}>
+        <button
+          onClick={handleSaveMapping}
+          disabled={isSavingMapping}
+          style={{
+            background: isSavingMapping ? "#374151" : "#3b82f6",
+            color: "white",
+            border: "none",
+            borderRadius: 6,
+            padding: "10px 24px",
+            fontSize: 14,
+            cursor: isSavingMapping ? "default" : "pointer",
+          }}
+        >
+          {isSavingMapping ? "保存中..." : "💾 口座設定を保存"}
+        </button>
+        {mapSaveMessage && (
+          <span
             style={{
-              marginTop: 16,
-              textAlign: "right",
-              fontSize: 14,
-              color: "#94a3b8",
-              borderTop: "1px solid #334155",
-              paddingTop: 12,
+              marginLeft: 12,
+              color: mapSaveMessage.ok ? "#4ade80" : "#f87171",
+              fontSize: 13,
             }}
           >
-            月次換算合計：
-            <span
-              style={{
-                fontFamily: "monospace",
-                fontWeight: 700,
-                color: "#fbbf24",
-                marginLeft: 8,
-              }}
-            >
-              {formatJpy(summary.fixedExpenseTotal)}
-            </span>
-          </div>
+            {mapSaveMessage.text}
+          </span>
         )}
       </div>
 

@@ -17,6 +17,7 @@ import { eq, inArray } from "drizzle-orm";
 import type { AssetType } from "@assetbridge/types";
 import path from "path";
 import { fileURLToPath } from "url";
+import { AppLogsRepo } from "@assetbridge/db/repos/app_logs";
 
 const settingsRepo = new SettingsRepo(sqlite);
 
@@ -210,6 +211,9 @@ async function runBrowserProcess(
 }
 
 export async function runScrape(jobId?: number): Promise<ScrapedData> {
+  const logsRepo = new AppLogsRepo(db);
+  const startTime = Date.now();
+
   // DB 優先、なければ env フォールバック
   const email = settingsRepo.get("mf_email") ?? process.env.MF_EMAIL ?? "";
   const password = settingsRepo.get("mf_password") ?? process.env.MF_PASSWORD ?? "";
@@ -220,6 +224,9 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
 
   const cookiesJson = loadCookiesFromDb();
 
+  try { logsRepo.insertLog("scrape", "info", "スクレイプ開始", { jobId }); } catch { /* ignore */ }
+
+  try {
   const { data, cookies } = await runBrowserProcess(email, password, cookiesJson, jobId);
 
   // セッション Cookie を DB へ保存
@@ -394,6 +401,21 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
         : 0,
   });
 
+  try {
+    const counts = {
+      CASH: deduplicatedHoldings.filter(a => a.assetType === "CASH").length,
+      STOCK_JP: deduplicatedHoldings.filter(a => a.assetType === "STOCK_JP").length,
+      STOCK_US: deduplicatedHoldings.filter(a => a.assetType === "STOCK_US").length,
+      FUND: deduplicatedHoldings.filter(a => a.assetType === "FUND").length,
+      PENSION: deduplicatedHoldings.filter(a => a.assetType === "PENSION").length,
+      POINT: deduplicatedHoldings.filter(a => a.assetType === "POINT").length,
+    };
+    logsRepo.insertLog("scrape", "info",
+      `資産取得完了: CASH:${counts.CASH} STOCK_JP:${counts.STOCK_JP} STOCK_US:${counts.STOCK_US} FUND:${counts.FUND} PENSION:${counts.PENSION} POINT:${counts.POINT}`,
+      { counts }
+    );
+  } catch { /* ignore */ }
+
   // cc_account_mapping の CASH asset ID が変わった場合、設定を自動更新する
   // （CASH 全削除→再 INSERT でオートインクリメント ID が変わるため）
   {
@@ -459,6 +481,7 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
         .run();
     }
     console.log(`[crawler] Saved ${data.creditCardWithdrawals.length} credit card withdrawal(s)`);
+    try { logsRepo.insertLog("scrape", "info", `クレカ引き落とし: ${data.creditCardWithdrawals.length}件取得`, { count: data.creditCardWithdrawals.length }); } catch { /* ignore */ }
   }
 
   // クレカ詳細情報を DB に保存
@@ -503,5 +526,12 @@ export async function runScrape(jobId?: number): Promise<ScrapedData> {
   console.log(
     `[crawler] Scrape complete: ¥${data.totalJpy.toLocaleString()}`
   );
+  try {
+    logsRepo.insertLog("scrape", "info", "スクレイプ完了", { durationMs: Date.now() - startTime });
+  } catch { /* ignore */ }
   return data;
+  } catch (e) {
+    try { logsRepo.insertLog("scrape", "error", `スクレイプエラー: ${(e as Error).message}`, { stack: (e as Error).stack }); } catch { /* ignore */ }
+    throw e;
+  }
 }

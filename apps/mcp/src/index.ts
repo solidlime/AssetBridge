@@ -13,6 +13,7 @@ import { registerResources } from "./tools/resources";
 import { registerCreditTools } from "./tools/credit";
 import { registerWithdrawalTools } from "./tools/withdrawals";
 import { registerFinancialSummaryTools } from "./tools/financial_summary";
+import { registerFundTransferTools } from "./tools/fund_transfer";
 import { registerAssetAdvicePrompts } from "./prompts/asset_advice";
 
 const PORT = parseInt(process.env.PORT ?? "8001", 10);
@@ -37,6 +38,7 @@ function createMcpServer(): McpServer {
   registerCreditTools(server);
   registerWithdrawalTools(server);
   registerFinancialSummaryTools(server);
+  registerFundTransferTools(server);
   registerAssetAdvicePrompts(server);
   registerResources(server);
 

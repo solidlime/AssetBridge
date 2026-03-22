@@ -58,6 +58,8 @@ module.exports = {
       env: {
         PORT: 8001,
         NODE_ENV: "production",
+        API_KEY: process.env.API_KEY || "test",
+        API_URL: process.env.API_URL || "http://localhost:8000",
       },
       log_file: "logs/mcp.log",
       error_file: "logs/mcp.error.log",

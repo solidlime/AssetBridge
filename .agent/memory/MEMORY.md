@@ -123,4 +123,23 @@ AssetBridge — MF for 住信SBI銀行スクレイパー + Hono/tRPC API + MCP +
 ### T11: PM2/マイグレーション再発防止
 - docs/operations/deployment.md 新規作成 / scripts/reload.sh にコメント追加
 
+## 引き落とし管理ページ (withdrawals/page.tsx)
+- 警告バナーは accountSummary (getWithdrawalAccountSummary) の shortfallJpy < 0 の口座を口座名ベースで表示
+- 固定費テーブルはインライン編集対応（ダブルクリックで編集、Enter/Blur で保存）
+- 口座設定保存ボタンはページ最下部に1つだけ（クレカ+固定費共用）
+
+## ダッシュボード D&D
+- @dnd-kit/core・@dnd-kit/sortable で実装
+- DashboardClient.tsx (Client Component) が全ブロックの DnD レイアウト管理
+- ブロックID: asset-history / category-allocation / monthly-expense / credit-card / balance-warning
+- localStorage["assetbridge-dashboard-layout"] に保存
+
+## MCP 資金移動アドバイスツール
+- apps/mcp/src/tools/fund_transfer.ts: get_fund_transfer_suggestion ツール
+- ecosystem.config.cjs の MCP env に API_KEY / API_URL が必要
+
+## スクレイプログ
+- apps/crawler/src/scrapers/mf_sbi_bank.ts: AppLogsRepo 経由で開始・完了・エラーをログ
+- ログ失敗は try/catch で無視（スクレイプ継続保証）
+
 
